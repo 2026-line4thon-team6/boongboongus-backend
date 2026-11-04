@@ -90,7 +90,8 @@ com.boongboongus.backend
 - `main`·`develop` 대상 push/PR: GitHub Actions가 Java21·PostgreSQL18로 `clean build` 실행
 - 작업 흐름: 이슈 생성 → 번호가 포함된 작업 브랜치 → PR → 리뷰·CI → 머지 → 이슈 완료 확인
 - 브랜치 예시: `feat/12-drive-start`, `fix/34-card-expiration`
-- 커밋·PR 제목 예시: `feat: 주행 시작 API 구현 (#12)`
+- 커밋 예시: `feat: 주행 시작 API 구현` (이슈 번호는 선택)
+- PR 제목 예시: `feat: 주행 시작 API 구현 (#12)`
 - PR 본문에 `Refs #12`로 이슈 참조. 일반 PR은 `develop` 대상이며 완료 조건 확인 후 이슈 종료
 - 기능 개발·버그 수정·일반 작업 이슈 양식과 PR 템플릿 포함
 
