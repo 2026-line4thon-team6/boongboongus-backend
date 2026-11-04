@@ -85,6 +85,8 @@ com.boongboongus.backend
 
 ## GitHub 협업
 
+팀 작업 기준은 [CONTRIBUTING.md](CONTRIBUTING.md), AI 공통 지침은 [AGENTS.md](AGENTS.md)를 참고합니다.
+
 - `main`·`develop` 대상 push/PR: GitHub Actions가 Java21·PostgreSQL18로 `clean build` 실행
 - 브랜치 예시: `feat/drive-start`, `fix/card-expiration`, `chore/initial-setup`
 - 커밋 예시: `feat: 주행 시작 API 구현`, `chore: 백엔드 초기 설정`
