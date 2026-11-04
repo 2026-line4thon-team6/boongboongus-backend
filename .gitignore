@@ -6,6 +6,8 @@ HELP.md
 logs/
 .DS_Store
 Thumbs.db
+CLAUDE.local.md
+.claude/settings.local.json
 .gradle
 build/
 !gradle/wrapper/gradle-wrapper.jar

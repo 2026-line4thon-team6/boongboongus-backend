@@ -85,9 +85,15 @@ com.boongboongus.backend
 
 ## GitHub 협업
 
+팀 작업 기준은 [CONTRIBUTING.md](CONTRIBUTING.md), AI 공통 지침은 [AGENTS.md](AGENTS.md)를 참고합니다.
+
 - `main`·`develop` 대상 push/PR: GitHub Actions가 Java21·PostgreSQL18로 `clean build` 실행
-- 브랜치 예시: `feat/drive-start`, `fix/card-expiration`, `chore/initial-setup`
-- 커밋 예시: `feat: 주행 시작 API 구현`, `chore: 백엔드 초기 설정`
-- PR·기능 요청·버그 템플릿 포함
+- 작업 흐름: 이슈 생성 → 번호가 포함된 작업 브랜치 → PR → 리뷰·CI → 머지 → 이슈 완료 확인
+- 브랜치 예시: `feat/12-drive-start`, `fix/34-card-expiration`
+- 커밋 예시: `feat: 주행 시작 API 구현` (이슈 번호는 선택)
+- PR 제목 예시: `feat: 주행 시작 API 구현 (#12)`
+- PR 본문에 `Refs #12`로 이슈 참조. 일반 PR은 `develop` 대상이며 완료 조건 확인 후 이슈 종료
+- 기능 개발·버그 수정·일반 작업 이슈는 기본 내용이 채워진 단일 Markdown 편집창으로 작성
+- PR도 기본 본문 템플릿을 사용하며 전체 내용을 한 번에 수정·붙여넣기 가능
 
 브랜치 보호는 저장소 관리자가 GitHub Settings → Rules → Rulesets에서 별도로 설정합니다. PR 승인1명과 `Build and test` 체크 필수를 권장합니다. 이 저장소 파일만으로 GitHub의 보호 규칙이나 Secrets가 설정되지는 않습니다.
