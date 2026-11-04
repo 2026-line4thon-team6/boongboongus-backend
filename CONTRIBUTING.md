@@ -2,27 +2,38 @@
 
 붕붕어스 백엔드의 초기 협업 기준입니다. 팀 합의로 조정하며, 규칙 변경도 PR로 공유합니다.
 
-## 브랜치와 PR
+## 이슈 → 개발 → PR → 리뷰 → 머지
 
-- `main`: 배포 기준 브랜치. 검증된 변경을 PR로 반영합니다.
-- `develop`: 기능 통합 브랜치. 일반 작업의 PR 대상입니다.
-- 작업은 최신 `develop`에서 분기합니다: `feat/drive-start`, `fix/card-expiration`, `docs/api-guide`, `chore/dependency-update`.
-- 작업 전 해당 영역의 이슈·진행 중 PR을 확인합니다. 공통 응답·설정·같은 파일을 함께 수정하면 담당자와 범위를 먼저 조율합니다.
-- PR은 하나의 목적에 집중합니다. 변경 동작·확인 방법·이슈 링크·프론트 전달 사항을 적습니다.
-- 정상적인 병합 기준은 CI 통과와 다른 팀원1명의 승인입니다. 팀원이 부족한 예외는 PR에 사유를 남깁니다.
-- 기능 PR은 squash merge를 기본으로 하고, 팀의 릴리스 정책에 맞춰 `develop` → `main` PR을 만듭니다.
+1. **이슈 생성:** 기존 이슈·PR 중복을 확인하고 기능/버그/일반 작업 템플릿을 선택합니다. 목적·작업 범위·완료 조건을 적고 담당자를 지정합니다. 생성된 번호(예: `#12`)를 작업 식별자로 사용합니다.
+2. **브랜치 생성:** 최신 `develop`에서 `type/이슈번호-작업명`으로 분기합니다. 예: `feat/12-drive-start`, `fix/34-card-expiration`, `docs/56-api-guide`.
+3. **개발·검증:** 커밋 메시지 끝에 이슈 번호를 적습니다. 코드·설정 변경은 관련 테스트와 Gradle 빌드, 문서 변경은 링크·내용을 확인합니다.
+4. **PR 생성:** 작업 브랜치를 push하고 `develop` 대상 PR을 만듭니다. 제목은 `feat: 주행 시작 API 구현 (#12)`처럼 작성하고, 본문에 `Refs #12`와 변경·검증 내용을 적습니다. 담당자와 리뷰어를 지정합니다. 개발 중 공유는 Draft PR로 하고, 준비되면 Ready for review로 전환합니다.
+5. **리뷰 반영:** 다른 팀원1명 이상의 Approve를 받습니다. 수정 요청을 반영하고 답변한 뒤 재리뷰를 요청합니다. 승인 후 중요한 변경이 추가되면 다시 검토받습니다.
+6. **머지:** `Build and test` 성공, 충돌 없음, 필수 수정 요청 해결, 승인 여부를 확인한 뒤 작성자 또는 담당자가 Squash and merge합니다. squash 커밋에도 이슈 번호를 남깁니다. 승인 없이 직접 `develop`·`main`에 push하지 않습니다.
+7. **작업 종료:** 병합 결과와 이슈 완료 조건을 확인하고 이슈를 닫습니다. 후속 작업은 새 이슈로 분리하고 연결합니다. 병합된 작업 브랜치는 더 이상 사용하지 않을 때 삭제하고 로컬 `develop`을 갱신합니다.
+
+`main`은 배포 기준, `develop`은 기능 통합 브랜치입니다. 릴리스는 별도의 `develop` → `main` PR로 검토·검증 후 반영합니다. 공통 응답·설정·같은 파일을 함께 수정하면 담당자와 범위를 조율합니다. PR은 하나의 목적에 집중합니다.
 
 ```powershell
 git switch develop
 git pull --ff-only origin develop
-git switch -c feat/drive-start
+git switch -c feat/12-drive-start
+# 구현 및 검증 후
+git add .
+git commit -m "feat: 주행 시작 API 구현 (#12)"
+git push -u origin feat/12-drive-start
 ```
 
-커밋 후 작업 브랜치를 push하고 `develop` 대상 PR을 엽니다. 미커밋 변경이 있는 상태에서 브랜치를 강제로 맞추거나 덮어쓰지 않습니다.
+위 `12`는 생성한 실제 이슈 번호로 바꿉니다. GitHub의 Compare & pull request에서 base=`develop`, compare=작업 브랜치를 선택합니다. 미커밋 변경을 강제로 덮어쓰지 않습니다.
+
+### 이슈 연결·종료
+
+- 일반 `develop` PR은 본문에 `Refs #12`로 관련 이슈를 참조하고, 가능한 경우 Development 사이드바에서도 연결합니다. 병합 후 작성자가 완료 조건을 확인하고 이슈를 닫습니다.
+- `Closes #12` 자동 연결·종료는 PR 대상이 저장소의 **기본 브랜치**일 때 적용됩니다. 기본 브랜치가 `main`이면 `develop`에 머지해도 이 키워드만으로 이슈가 자동 종료되지 않습니다. [GitHub 공식 안내](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)를 참고합니다.
 
 ## 커밋
 
-형식: `type: 변경 내용`. 예: `feat: 주행 시작 API 구현`
+형식: `type: 변경 내용 (#이슈번호)`. 예: `feat: 주행 시작 API 구현 (#12)`
 
 | type | 용도 |
 | --- | --- |

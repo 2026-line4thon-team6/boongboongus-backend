@@ -1,17 +1,40 @@
-name: 버그
-description: 예상과 다른 동작 신고
+name: 버그 수정
+description: 재현 가능한 오류와 기대 동작
 title: "[fix] "
 body:
+  - type: markdown
+    attributes:
+      value: "기존 이슈를 확인하고 작성해 주세요. 로그·요청에서 토큰·비밀번호·실제 개인정보를 제거합니다. 생성 후 담당자를 지정합니다."
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 기대 동작과 실제 동작
+      placeholder: |
+        기대 동작:
+        실제 동작:
+    validations:
+      required: true
   - type: textarea
     id: reproduction
     attributes:
       label: 재현 방법
-      description: 요청·응답과 재현 순서. 토큰·비밀번호는 제외해 주세요.
+      placeholder: |
+        1. 어떤 환경·상태에서
+        2. 어떤 API를 어떤 입력으로 호출하면
+        3. 어떤 상태·응답이 발생하는지
     validations:
       required: true
   - type: textarea
-    id: expected
+    id: environment
     attributes:
-      label: 기대 동작과 실제 동작
+      label: 실행 환경·로그
+      description: 브랜치·커밋, 프로필, DB 버전, requestId, 필요한 로그나 가상 데이터.
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 수정 완료 조건
+      placeholder: 같은 절차에서 기대 동작이 나오고 재발을 방지할 테스트가 통과하는지 등.
     validations:
       required: true

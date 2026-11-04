@@ -1,0 +1,43 @@
+name: 일반 작업
+description: 문서·설정·CI·리팩터링·테스트 작업
+title: "[task] "
+body:
+  - type: markdown
+    attributes:
+      value: "기존 이슈를 확인하고 작성해 주세요. 생성 후 담당자를 지정하고 발급된 번호로 작업 브랜치와 PR을 연결합니다."
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 작업 유형
+      options:
+        - chore (설정·의존성)
+        - docs (문서)
+        - ci (CI)
+        - refactor (리팩터링)
+        - test (테스트)
+        - style (포맷)
+        - perf (성능)
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: 목적과 작업 범위
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건과 확인 방법
+      placeholder: |
+        - [ ] 완료 조건
+        - 확인할 명령·결과 또는 문서 점검 방법:
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 영향·참고 자료
+      description: API·DB·환경변수·다른 작업에 미치는 영향. 없으면 없음.
+    validations:
+      required: false
