@@ -121,6 +121,30 @@ public class DrivePreparationController {
         validateIdentifier(key, 16, 128, "Idempotency-Key");
     }
 
+    @PostMapping("/{driveId}/gps-batches")
+    @Operation(operationId = "uploadGpsBatch", summary = "GPS 좌표 묶음 업로드")
+    public ApiResponse<DriveGps.Receipt> uploadGpsBatch(
+            Principal principal,
+            @PathVariable String driveId,
+            @RequestHeader("X-Couple-Id") String coupleId,
+            @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody DriveGpsRequest.Batch request) {
+        validateControlHeaders(driveId, coupleId, key);
+        return ApiResponse.success(service.uploadGpsBatch(principal, coupleId, key, driveId, request));
+    }
+
+    @PostMapping("/{driveId}/end")
+    @Operation(operationId = "endDrive", summary = "도착·수동 주행 종료")
+    public ApiResponse<DriveView> endDrive(
+            Principal principal,
+            @PathVariable String driveId,
+            @RequestHeader("X-Couple-Id") String coupleId,
+            @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody DriveGpsRequest.End request) {
+        validateControlHeaders(driveId, coupleId, key);
+        return ApiResponse.success(service.endDrive(principal, coupleId, key, driveId, request));
+    }
+
     private static void validateIdentifier(String value, int min, int max, String field) {
         if (value.isBlank() || value.length() < min || value.length() > max) {
             throw new DriveApiException(HttpStatus.BAD_REQUEST, "BAD_REQUEST", field + " 값을 확인해 주세요.");

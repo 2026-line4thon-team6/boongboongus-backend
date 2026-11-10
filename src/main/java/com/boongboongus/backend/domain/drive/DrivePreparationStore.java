@@ -1,6 +1,7 @@
 package com.boongboongus.backend.domain.drive;
 
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
+import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Route;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -8,7 +9,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.NavigableMap;
 import java.util.Optional;
+import java.util.TreeMap;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.json.JsonMapper;
@@ -145,6 +149,74 @@ class DrivePreparationStore {
                 .update();
     }
 
+    void end(DriveRow drive, DriveGpsRequest.EndReason reason, Instant now) {
+        jdbc.sql("""
+                UPDATE drives SET status = 'ENDED', active_slot = NULL, ended_at = :now, state_changed_at = :now,
+                    end_reason = :reason, active_millis = :activeMillis, paused_millis = :pausedMillis,
+                    control_version = control_version + 1
+                WHERE id = :id
+                """)
+                .param("id", drive.id())
+                .param("now", now.atOffset(ZoneOffset.UTC))
+                .param("reason", reason.name())
+                .param("activeMillis", drive.activeMillisAt(now))
+                .param("pausedMillis", drive.pausedMillisAt(now))
+                .update();
+    }
+
+    List<DriveGps.Pause> pauses(String driveId) {
+        return jdbc.sql("""
+                SELECT paused_at, resumed_at FROM drive_pause_periods WHERE drive_id = :id ORDER BY pause_version
+                """)
+                .param("id", driveId)
+                .query((rs, row) -> new DriveGps.Pause(instant(rs, "paused_at"), instant(rs, "resumed_at")))
+                .list();
+    }
+
+    NavigableMap<Integer, DriveGps.Sample> gpsHistory(String driveId) {
+        var samples = new TreeMap<Integer, DriveGps.Sample>();
+        jdbc.sql("SELECT sequence, recorded_at, latitude, longitude FROM drive_gps_samples WHERE drive_id = :id")
+                .param("id", driveId)
+                .query((rs, row) -> {
+                    Double latitude = rs.getObject("latitude", Double.class);
+                    Coordinate coordinate = latitude == null ? null : new Coordinate(latitude, rs.getDouble("longitude"));
+                    return new DriveGps.Sample(rs.getInt("sequence"), instant(rs, "recorded_at"), coordinate);
+                })
+                .list()
+                .forEach(sample -> samples.put(sample.sequence(), sample));
+        return samples;
+    }
+
+    void saveGpsSample(String driveId, DriveGps.Sample sample, boolean replace) {
+        String sql = replace ? """
+                UPDATE drive_gps_samples SET recorded_at = :at, latitude = :latitude, longitude = :longitude
+                WHERE drive_id = :id AND sequence = :sequence
+                """ : """
+                INSERT INTO drive_gps_samples (drive_id, sequence, recorded_at, latitude, longitude)
+                VALUES (:id, :sequence, :at, :latitude, :longitude)
+                """;
+        Coordinate coordinate = sample.coordinate();
+        jdbc.sql(sql)
+                .param("id", driveId)
+                .param("sequence", sample.sequence())
+                .param("at", sample.recordedAt().atOffset(ZoneOffset.UTC))
+                .param("latitude", coordinate == null ? null : coordinate.latitude())
+                .param("longitude", coordinate == null ? null : coordinate.longitude())
+                .update();
+    }
+
+    void updateGpsMetrics(String driveId, DriveGps.Summary summary) {
+        jdbc.sql("""
+                UPDATE drives SET distance_meters = :distance, last_gps_at = :lastGps, gps_quality = :quality
+                WHERE id = :id
+                """)
+                .param("id", driveId)
+                .param("distance", summary.distanceMeters())
+                .param("lastGps", summary.lastGpsAt() == null ? null : summary.lastGpsAt().atOffset(ZoneOffset.UTC))
+                .param("quality", summary.gpsQuality())
+                .update();
+    }
+
     boolean reserve(RequestKey key, String fingerprint, Instant expiresAt) {
         return request("""
                 INSERT INTO drive_idempotency (couple_id, user_id, idempotency_key, fingerprint, expires_at)
@@ -169,7 +241,7 @@ class DrivePreparationStore {
                 .single();
     }
 
-    void saveResult(RequestKey key, String fingerprint, Instant expiresAt, DriveView view) {
+    void saveResult(RequestKey key, String fingerprint, Instant expiresAt, Object result) {
         request("""
                 UPDATE drive_idempotency
                 SET fingerprint = :fingerprint, expires_at = :expiresAt, response_snapshot = :snapshot
@@ -177,7 +249,7 @@ class DrivePreparationStore {
                 """, key)
                 .param("fingerprint", fingerprint)
                 .param("expiresAt", expiresAt.atOffset(ZoneOffset.UTC))
-                .param("snapshot", json.writeValueAsString(view))
+                .param("snapshot", json.writeValueAsString(result))
                 .update();
     }
 
@@ -195,7 +267,9 @@ class DrivePreparationStore {
                 rs.getString("recorder_user_id"), rs.getString("route_id"), readPlace(rs.getString("origin_snapshot")),
                 readPlace(rs.getString("destination_snapshot")), rs.getInt("control_version"),
                 instant(rs, "started_at"), instant(rs, "state_changed_at"),
-                rs.getLong("active_millis"), rs.getLong("paused_millis"));
+                rs.getLong("active_millis"), rs.getLong("paused_millis"), instant(rs, "ended_at"),
+                rs.getString("end_reason"), rs.getDouble("distance_meters"), instant(rs, "last_gps_at"),
+                rs.getString("gps_quality"));
     }
 
     private String snapshot(Object value) {
@@ -213,7 +287,15 @@ class DrivePreparationStore {
 
     record DriveRow(String id, String coupleId, String title, String status, String driverUserId,
             String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
-            int controlVersion, Instant startedAt, Instant stateChangedAt, long activeMillis, long pausedMillis) {
+            int controlVersion, Instant startedAt, Instant stateChangedAt, long activeMillis, long pausedMillis,
+            Instant endedAt, String endReason, double distanceMeters, Instant lastGpsAt, String gpsQuality) {
+
+        DriveRow(String id, String coupleId, String title, String status, String driverUserId,
+                String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
+                int controlVersion) {
+            this(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId, routeId, origin,
+                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING");
+        }
 
         DriveView view() {
             return view(Instant.now());
@@ -221,11 +303,12 @@ class DrivePreparationStore {
 
         DriveView view(Instant now) {
             Instant pausedAt = "PAUSED".equals(status) ? stateChangedAt : null;
+            Instant editableUntil = endedAt == null ? null : endedAt.plus(Duration.ofHours(24));
             return new DriveView(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId,
-                    origin, destination, routeId, startedAt, pausedAt, null, null, controlVersion,
-                    new DriveView.Metrics(0, Math.toIntExact(activeMillisAt(now) / 1000),
-                            Math.toIntExact(pausedMillisAt(now) / 1000), null, null, "MISSING"),
-                    false, null, null, null);
+                    origin, destination, routeId, startedAt, pausedAt, endedAt, endReason, controlVersion,
+                    new DriveView.Metrics(distanceMeters, Math.toIntExact(activeMillisAt(now) / 1000),
+                            Math.toIntExact(pausedMillisAt(now) / 1000), null, lastGpsAt, gpsQuality),
+                    editableUntil != null && now.isBefore(editableUntil), null, editableUntil, null);
         }
 
         long activeMillisAt(Instant now) {
