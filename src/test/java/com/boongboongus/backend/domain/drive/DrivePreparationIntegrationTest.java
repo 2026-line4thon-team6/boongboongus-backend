@@ -2,6 +2,7 @@ package com.boongboongus.backend.domain.drive;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -199,6 +200,155 @@ class DrivePreparationIntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    void controlsDriveWithoutResettingTimesOrOriginalOriginWhenRerouting() throws Exception {
+        String driver = couple + "_a";
+        String recorder = couple + "_b";
+        String id = driveId(mvc.perform(prepare(driver, key(), roles(couple))).andExpect(status().isCreated()));
+        mvc.perform(update(recorder, id, """
+                {"title":"함께 보는 노을","routeId":"fixture_route","expectedVersion":1}
+                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.controlVersion").value(2));
+        String startKey = key();
+        MvcResult started = mvc.perform(control(recorder, id, "start", startKey, startBody(2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.controlVersion").value(3))
+                .andExpect(jsonPath("$.data.metrics.activeDurationSeconds").value(0))
+                .andReturn();
+        String startedAt = json.readTree(started.getResponse().getContentAsString())
+                .path("data").path("startedAt").asText();
+        jdbc.sql("UPDATE drives SET state_changed_at = :time WHERE id = :id")
+                .param("time", Instant.now().minusSeconds(120).atOffset(ZoneOffset.UTC)).param("id", id).update();
+
+        String pauseKey = key();
+        mvc.perform(control(driver, id, "pause", pauseKey, version(3)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PAUSED"))
+                .andExpect(jsonPath("$.data.pausedAt").isString())
+                .andExpect(jsonPath("$.data.metrics.activeDurationSeconds").value(org.hamcrest.Matchers.greaterThanOrEqualTo(120)))
+                .andExpect(jsonPath("$.data.controlVersion").value(4));
+        mvc.perform(update(recorder, id, """
+                {"routeId":"fixture_reroute","expectedVersion":4}
+                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.title").value("함께 보는 노을"))
+                .andExpect(jsonPath("$.data.routeId").value("fixture_reroute"))
+                .andExpect(jsonPath("$.data.origin.name").value("새 경로 출발지"))
+                .andExpect(jsonPath("$.data.startedAt").value(startedAt))
+                .andExpect(jsonPath("$.data.controlVersion").value(5));
+        mvc.perform(control(driver, id, "resume", key(), version(5)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.pausedAt").value((Object) null))
+                .andExpect(jsonPath("$.data.controlVersion").value(6));
+        mvc.perform(control(driver, id, "pause", pauseKey, version(3)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("PAUSED"))
+                .andExpect(jsonPath("$.data.controlVersion").value(4));
+        mvc.perform(control(recorder, id, "start", startKey, startBody(2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.startedAt").value(startedAt))
+                .andExpect(jsonPath("$.data.controlVersion").value(3));
+        mvc.perform(get(BASE + "/{id}", id).principal(() -> recorder))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.data.controlVersion").value(6));
+        assertThat(jdbc.sql("""
+                SELECT count(*) FROM drive_pause_periods WHERE drive_id = :id AND resumed_at IS NOT NULL
+                """).param("id", id).query(Long.class).single()).isEqualTo(1L);
+        assertThat(jdbc.sql("SELECT initial_origin_snapshot FROM drives WHERE id = :id")
+                .param("id", id).query(String.class).single()).contains("예시 출발지");
+        assertThat(jdbc.sql("SELECT initial_coordinate FROM drives WHERE id = :id")
+                .param("id", id).query(String.class).single()).contains("37.5");
+    }
+
+    @Test
+    void enforcesAccessLocationAndState() throws Exception {
+        String recorder = couple + "_b";
+        String driver = couple + "_a";
+        String other = "test_couple_" + UUID.randomUUID() + "_a";
+        String id = driveId(mvc.perform(prepare(driver, key(), roles(couple))).andExpect(status().isCreated()));
+        mvc.perform(get(BASE + "/{id}", id).principal(() -> other)).andExpect(status().isNotFound());
+        mvc.perform(control(driver, id, "start", key(), startBody(1))).andExpect(status().isForbidden());
+        mvc.perform(control(recorder, id, "start", key(), startBody(1)))
+                .andExpect(status().is(422))
+                .andExpect(jsonPath("$.error.code").value("DESTINATION_REQUIRED"));
+        mvc.perform(control(driver, id, "pause", key(), version(1)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("DRIVE_STATE_CONFLICT"));
+        mvc.perform(update(driver, id, version(1))).andExpect(status().is(422));
+        mvc.perform(update(driver, id, """
+                {"title":null,"routeId":"fixture_route","expectedVersion":1}
+                """)).andExpect(status().isBadRequest());
+        mvc.perform(update(driver, id, """
+                {"routeId":"fixture_route","expectedVersion":1}
+                """)).andExpect(status().isOk());
+        mvc.perform(control(recorder, id, "start", key(), version(2)))
+                .andExpect(status().is(422))
+                .andExpect(jsonPath("$.error.code").value("LOCATION_REQUIRED"));
+        mvc.perform(control(recorder, id, "start", key(), startBody(2).replace("37.5", "90.1")))
+                .andExpect(status().is(422));
+        mvc.perform(control(recorder, id, "start", key(), startBody(2).replace("37.5", "\"37.5\"")))
+                .andExpect(status().isBadRequest());
+        mvc.perform(control(recorder, id, "start", key(), startBody(2))).andExpect(status().isOk());
+        mvc.perform(control(driver, id, "pause", key(), version(2)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
+        mvc.perform(control(driver, id, "resume", key(), version(3)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("DRIVE_STATE_CONFLICT"));
+    }
+
+    @Test
+    void rejectsStartWithoutRecordedLocationConsent() throws Exception {
+        String noConsentCouple = "test_couple_no_consent_" + UUID.randomUUID();
+        String recorder = noConsentCouple + "_b";
+        String id = driveId(mvc.perform(prepare(recorder, noConsentCouple, key(),
+                roles(noConsentCouple).replace("{", "{\"routeId\":\"fixture_route\",")))
+                .andExpect(status().isCreated()));
+        mvc.perform(control(recorder, id, "start", key(), startBody(1)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.message").value("주행을 시작하려면 위치 정보 동의가 필요합니다."));
+    }
+
+    @Test
+    void onlyOneConcurrentPauseCanUseTheSameVersion() throws Exception {
+        String recorder = couple + "_b";
+        String id = driveId(mvc.perform(prepare(recorder, key(),
+                roles(couple).replace("{", "{\"routeId\":\"fixture_route\","))).andExpect(status().isCreated()));
+        mvc.perform(control(recorder, id, "start", key(), startBody(1))).andExpect(status().isOk());
+        var results = concurrently(control(recorder, id, "pause", key(), version(2)),
+                control(couple + "_a", id, "pause", key(), version(2)));
+        assertThat(results).extracting(result -> result.getResponse().getStatus()).containsExactlyInAnyOrder(200, 409);
+        assertThat(jdbc.sql("SELECT count(*) FROM drive_pause_periods WHERE drive_id = :id")
+                .param("id", id).query(Long.class).single()).isEqualTo(1L);
+    }
+
+    private MockHttpServletRequestBuilder update(String user, String driveId, String body) {
+        return patch(BASE + "/{id}", driveId).principal(() -> user).header("X-Couple-Id", couple)
+                .contentType(MediaType.APPLICATION_JSON).content(body);
+    }
+
+    private MockHttpServletRequestBuilder control(String user, String driveId, String action, String requestKey,
+            String body) {
+        String currentCouple = user.substring(0, user.length() - 2);
+        return post(BASE + "/{id}/" + action, driveId).principal(() -> user)
+                .header("X-Couple-Id", currentCouple).header("Idempotency-Key", requestKey)
+                .contentType(MediaType.APPLICATION_JSON).content(body);
+    }
+
+    private static String version(int version) {
+        return "{\"expectedVersion\":" + version + "}";
+    }
+
+    private static String startBody(int version) {
+        return """
+                {"expectedVersion":%d,"initialCoordinate":{"latitude":37.5,"longitude":127.0}}
+                """.formatted(version);
+    }
+
     private MockHttpServletRequestBuilder prepare(String user, String requestKey, String body) {
         return prepare(user, couple, requestKey, body);
     }
@@ -268,13 +418,20 @@ class DrivePreparationIntegrationTest {
         }
 
         @Bean
+        DriveLocationConsentLookup driveLocationConsentLookup() {
+            return userId -> !userId.startsWith("test_couple_no_consent_");
+        }
+
+        @Bean
         DriveRouteLookup driveRouteLookup() {
             return (userId, coupleId, routeId) -> {
-                if (!"fixture_route".equals(routeId) || !userId.startsWith(coupleId + "_")) {
+                if (!List.of("fixture_route", "fixture_reroute").contains(routeId)
+                        || !userId.startsWith(coupleId + "_")) {
                     return Optional.empty();
                 }
+                String originName = "fixture_route".equals(routeId) ? "예시 출발지" : "새 경로 출발지";
                 return Optional.of(new Route(
-                        new Place(null, "예시 출발지", "", new Coordinate(37.5, 127.0)),
+                        new Place(null, originName, "", new Coordinate(37.5, 127.0)),
                         new Place("place_fixture", "예시 도착지", "", new Coordinate(37.6, 127.1))));
             };
         }

@@ -22,10 +22,10 @@ record DrivePreparationRequest(
         throw new IllegalArgumentException("Unknown drive preparation field");
     }
 
-    record Cancel(@NotNull @Positive @JsonDeserialize(using = ExactVersion.class) Integer expectedVersion) {
+    record Version(@NotNull @Positive @JsonDeserialize(using = ExactVersion.class) Integer expectedVersion) {
         @JsonAnySetter
         void rejectUnknownField(String name, Object value) {
-            throw new IllegalArgumentException("Unknown drive cancellation field");
+            throw new IllegalArgumentException("Unknown drive control field");
         }
     }
 
