@@ -1,8 +1,10 @@
 package com.boongboongus.backend.domain.drive;
 
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
+import com.boongboongus.backend.domain.drive.DriveRouteLookup.Route;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -52,7 +54,16 @@ class DrivePreparationStore {
     }
 
     Optional<DriveRow> lockDrive(String coupleId, String driveId) {
-        return jdbc.sql("SELECT * FROM drives WHERE couple_id = :coupleId AND id = :id FOR UPDATE")
+        return findDrive(coupleId, driveId, true);
+    }
+
+    Optional<DriveRow> findDrive(String coupleId, String driveId) {
+        return findDrive(coupleId, driveId, false);
+    }
+
+    private Optional<DriveRow> findDrive(String coupleId, String driveId, boolean forUpdate) {
+        String sql = "SELECT * FROM drives WHERE couple_id = :coupleId AND id = :id";
+        return jdbc.sql(forUpdate ? sql + " FOR UPDATE" : sql)
                 .param("coupleId", coupleId)
                 .param("id", driveId)
                 .query(this::readDrive)
@@ -65,6 +76,72 @@ class DrivePreparationStore {
                 WHERE id = :id
                 """)
                 .param("id", drive.id())
+                .update();
+    }
+
+    void update(DriveRow drive, String title, String routeId, Route route) {
+        jdbc.sql("""
+                UPDATE drives SET title = :title, route_id = :routeId, origin_snapshot = :origin,
+                    destination_snapshot = :destination, control_version = control_version + 1
+                WHERE id = :id
+                """)
+                .param("id", drive.id())
+                .param("title", title)
+                .param("routeId", route == null ? drive.routeId() : routeId)
+                .param("origin", snapshot(route == null ? drive.origin() : route.origin()))
+                .param("destination", snapshot(route == null ? drive.destination() : route.destination()))
+                .update();
+    }
+
+    void start(DriveRow drive, DriveControlRequest.InitialCoordinate coordinate, Instant now) {
+        jdbc.sql("""
+                UPDATE drives SET status = 'ACTIVE', started_at = :now, state_changed_at = :now,
+                    initial_origin_snapshot = origin_snapshot, initial_coordinate = :coordinate,
+                    control_version = control_version + 1
+                WHERE id = :id
+                """)
+                .param("id", drive.id())
+                .param("now", now.atOffset(ZoneOffset.UTC))
+                .param("coordinate", snapshot(coordinate))
+                .update();
+    }
+
+    void pause(DriveRow drive, Instant now) {
+        updateClock(drive, "PAUSED", now);
+        jdbc.sql("""
+                INSERT INTO drive_pause_periods (drive_id, pause_version, paused_at) VALUES (:id, :version, :now)
+                """)
+                .param("id", drive.id())
+                .param("version", drive.controlVersion() + 1)
+                .param("now", now.atOffset(ZoneOffset.UTC))
+                .update();
+    }
+
+    void resume(DriveRow drive, Instant now) {
+        updateClock(drive, "ACTIVE", now);
+        int resumed = jdbc.sql("""
+                UPDATE drive_pause_periods SET resumed_at = :now WHERE drive_id = :id AND resumed_at IS NULL
+                """)
+                .param("id", drive.id())
+                .param("now", now.atOffset(ZoneOffset.UTC))
+                .update();
+        if (resumed != 1) {
+            throw new IllegalStateException("Expected exactly one open pause period");
+        }
+    }
+
+    private void updateClock(DriveRow drive, String status, Instant now) {
+        jdbc.sql("""
+                UPDATE drives SET status = :status, state_changed_at = :now,
+                    active_millis = :activeMillis, paused_millis = :pausedMillis,
+                    control_version = control_version + 1
+                WHERE id = :id
+                """)
+                .param("id", drive.id())
+                .param("status", status)
+                .param("now", now.atOffset(ZoneOffset.UTC))
+                .param("activeMillis", drive.activeMillisAt(now))
+                .param("pausedMillis", drive.pausedMillisAt(now))
                 .update();
     }
 
@@ -116,7 +193,18 @@ class DrivePreparationStore {
                 rs.getString("id"), rs.getString("couple_id"), rs.getString("title"),
                 rs.getString("status"), rs.getString("driver_user_id"), rs.getString("passenger_user_id"),
                 rs.getString("recorder_user_id"), rs.getString("route_id"), readPlace(rs.getString("origin_snapshot")),
-                readPlace(rs.getString("destination_snapshot")), rs.getInt("control_version"));
+                readPlace(rs.getString("destination_snapshot")), rs.getInt("control_version"),
+                instant(rs, "started_at"), instant(rs, "state_changed_at"),
+                rs.getLong("active_millis"), rs.getLong("paused_millis"));
+    }
+
+    private String snapshot(Object value) {
+        return value == null ? null : json.writeValueAsString(value);
+    }
+
+    private static Instant instant(ResultSet rs, String column) throws SQLException {
+        OffsetDateTime value = rs.getObject(column, OffsetDateTime.class);
+        return value == null ? null : value.toInstant();
     }
 
     private Place readPlace(String snapshot) {
@@ -125,16 +213,32 @@ class DrivePreparationStore {
 
     record DriveRow(String id, String coupleId, String title, String status, String driverUserId,
             String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
-            int controlVersion) {
+            int controlVersion, Instant startedAt, Instant stateChangedAt, long activeMillis, long pausedMillis) {
 
         DriveView view() {
-            return view(status, controlVersion);
+            return view(Instant.now());
         }
 
-        DriveView view(String viewStatus, int version) {
-            return new DriveView(id, coupleId, title, viewStatus, driverUserId, passengerUserId, recorderUserId,
-                    origin, destination, routeId, null, null, null, null, version,
-                    new DriveView.Metrics(0, 0, 0, null, null, "MISSING"), false, null, null, null);
+        DriveView view(Instant now) {
+            Instant pausedAt = "PAUSED".equals(status) ? stateChangedAt : null;
+            return new DriveView(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId,
+                    origin, destination, routeId, startedAt, pausedAt, null, null, controlVersion,
+                    new DriveView.Metrics(0, Math.toIntExact(activeMillisAt(now) / 1000),
+                            Math.toIntExact(pausedMillisAt(now) / 1000), null, null, "MISSING"),
+                    false, null, null, null);
+        }
+
+        long activeMillisAt(Instant now) {
+            return activeMillis + elapsedWhile("ACTIVE", now);
+        }
+
+        long pausedMillisAt(Instant now) {
+            return pausedMillis + elapsedWhile("PAUSED", now);
+        }
+
+        private long elapsedWhile(String phase, Instant now) {
+            return phase.equals(status) && stateChangedAt != null
+                    ? Math.max(0, Duration.between(stateChangedAt, now).toMillis()) : 0;
         }
     }
 

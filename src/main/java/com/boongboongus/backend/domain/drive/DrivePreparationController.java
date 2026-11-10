@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -54,11 +55,70 @@ public class DrivePreparationController {
             @PathVariable String driveId,
             @RequestHeader("X-Couple-Id") String coupleId,
             @RequestHeader("Idempotency-Key") String key,
-            @Valid @RequestBody DrivePreparationRequest.Cancel request) {
+            @Valid @RequestBody DrivePreparationRequest.Version request) {
+        validateControlHeaders(driveId, coupleId, key);
+        return ApiResponse.success(service.cancel(principal, coupleId, key, driveId, request));
+    }
+
+    @GetMapping("/{driveId}")
+    @Operation(operationId = "getDrive", summary = "드라이브 상태·요약 조회")
+    public ApiResponse<DriveView> get(Principal principal, @PathVariable String driveId) {
+        validateIdentifier(driveId, 1, 80, "driveId");
+        return ApiResponse.success(service.get(principal, driveId));
+    }
+
+    @PatchMapping("/{driveId}")
+    @Operation(operationId = "updateDrive", summary = "드라이브명·경로 변경")
+    public ApiResponse<DriveView> update(
+            Principal principal,
+            @PathVariable String driveId,
+            @RequestHeader("X-Couple-Id") String coupleId,
+            @Valid @RequestBody DriveControlRequest.Patch request) {
+        validateIdentifier(driveId, 1, 80, "driveId");
+        validateIdentifier(coupleId, 1, 80, "X-Couple-Id");
+        return ApiResponse.success(service.update(principal, coupleId, driveId, request));
+    }
+
+    @PostMapping("/{driveId}/start")
+    @Operation(operationId = "startDrive", summary = "GPS 주행 시작")
+    public ApiResponse<DriveView> start(
+            Principal principal,
+            @PathVariable String driveId,
+            @RequestHeader("X-Couple-Id") String coupleId,
+            @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody DriveControlRequest.Start request) {
+        validateControlHeaders(driveId, coupleId, key);
+        return ApiResponse.success(service.start(principal, coupleId, key, driveId, request));
+    }
+
+    @PostMapping("/{driveId}/pause")
+    @Operation(operationId = "pauseDrive", summary = "주행 기록 일시중단")
+    public ApiResponse<DriveView> pause(
+            Principal principal,
+            @PathVariable String driveId,
+            @RequestHeader("X-Couple-Id") String coupleId,
+            @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody DrivePreparationRequest.Version request) {
+        validateControlHeaders(driveId, coupleId, key);
+        return ApiResponse.success(service.pause(principal, coupleId, key, driveId, request));
+    }
+
+    @PostMapping("/{driveId}/resume")
+    @Operation(operationId = "resumeDrive", summary = "주행 기록 재개")
+    public ApiResponse<DriveView> resume(
+            Principal principal,
+            @PathVariable String driveId,
+            @RequestHeader("X-Couple-Id") String coupleId,
+            @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody DrivePreparationRequest.Version request) {
+        validateControlHeaders(driveId, coupleId, key);
+        return ApiResponse.success(service.resume(principal, coupleId, key, driveId, request));
+    }
+
+    private static void validateControlHeaders(String driveId, String coupleId, String key) {
         validateIdentifier(driveId, 1, 80, "driveId");
         validateIdentifier(coupleId, 1, 80, "X-Couple-Id");
         validateIdentifier(key, 16, 128, "Idempotency-Key");
-        return ApiResponse.success(service.cancel(principal, coupleId, key, driveId, request));
     }
 
     private static void validateIdentifier(String value, int min, int max, String field) {
