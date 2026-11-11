@@ -424,6 +424,7 @@ class DrivePreparationIntegrationTest {
         }
 
         @Bean
+        @org.springframework.context.annotation.Primary
         DriveRouteLookup driveRouteLookup() {
             return (userId, coupleId, routeId) -> {
                 if (!List.of("fixture_route", "fixture_reroute").contains(routeId)

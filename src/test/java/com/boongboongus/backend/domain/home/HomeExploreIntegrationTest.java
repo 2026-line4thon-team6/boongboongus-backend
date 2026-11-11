@@ -183,6 +183,7 @@ class HomeExploreIntegrationTest {
         }
 
         @Bean
+        @Primary
         DriveRouteLookup driveRouteLookup() {
             var origin = new DriveRouteLookup.Place(null, "출발지", "", new Coordinate(37.5, 127.0));
             var destination = new DriveRouteLookup.Place("place-1", "목적지", "", new Coordinate(37.6, 127.1));

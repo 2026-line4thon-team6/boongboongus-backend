@@ -9,6 +9,7 @@ public interface DriveRouteLookup {
     record Route(Place origin, Place destination) {
     }
 
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.ALWAYS)
     record Place(String placeId, String name, String address, Coordinate coordinate) {
     }
 

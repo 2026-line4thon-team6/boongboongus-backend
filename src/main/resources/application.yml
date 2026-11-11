@@ -35,6 +35,12 @@ management:
       show-details: never
 
 app:
+  maps:
+    kakao:
+      local-base-url: https://dapi.kakao.com
+      local-key: ${KAKAO_LOCAL_REST_API_KEY:}
+      mobility-base-url: https://apis-navi.kakaomobility.com
+      mobility-key: ${KAKAO_MOBILITY_REST_API_KEY:}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
 
