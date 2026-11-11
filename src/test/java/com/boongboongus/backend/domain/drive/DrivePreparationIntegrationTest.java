@@ -219,8 +219,9 @@ class DrivePreparationIntegrationTest {
                 .andReturn();
         String startedAt = json.readTree(started.getResponse().getContentAsString())
                 .path("data").path("startedAt").asText();
+        // Leave a margin for timestamp rounding at the 120-second assertion boundary.
         jdbc.sql("UPDATE drives SET state_changed_at = :time WHERE id = :id")
-                .param("time", Instant.now().minusSeconds(120).atOffset(ZoneOffset.UTC)).param("id", id).update();
+                .param("time", Instant.now().minusSeconds(121).atOffset(ZoneOffset.UTC)).param("id", id).update();
 
         String pauseKey = key();
         mvc.perform(control(driver, id, "pause", pauseKey, version(3)))
