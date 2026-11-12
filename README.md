@@ -53,12 +53,22 @@ macOS/Linux에서는 `./gradlew`를 사용합니다. 이미 설치된 PostgreSQL
 
 | 프로필 | 데이터베이스 | 스키마 | Swagger |
 | --- | --- | --- | --- |
-| `local` (기본) | `.env`의 PostgreSQL | `update` | 켜짐 |
-| `dev` | `.env`의 PostgreSQL | `update` | 켜짐 |
-| `test` | 기본 H2 PostgreSQL 모드 / CI는 PostgreSQL | 테스트용 생성·삭제 | 켜짐 |
+| `local` (기본) | `.env`의 PostgreSQL | `validate` | 켜짐 |
+| `dev` | `.env`의 PostgreSQL | `validate` | 켜짐 |
+| `test` | 기본 H2 PostgreSQL 모드 / CI는 PostgreSQL | `validate` | 켜짐 |
 | `prod` | 환경변수의 PostgreSQL | `validate` | 꺼짐 |
 
-H2는 자동 테스트 의존성에만 포함됩니다. PostgreSQL 전용 쿼리·제약은 실제 PostgreSQL에서도 검증합니다. GitHub CI는 PostgreSQL 서비스에 연결해서 테스트합니다. 운영 스키마는 배포 전에 별도 마이그레이션 절차를 정해야 합니다.
+H2는 자동 테스트 의존성에만 포함됩니다. 애플리케이션 시작 시 Flyway가 `src/main/resources/db/migration`의 SQL을 버전 순서대로 적용합니다. 첫 마이그레이션은 `drives`와 `drive_idempotency`를 생성합니다. 운영 배포 전에는 신규 스키마와 마이그레이션 계정 권한을 확인합니다. GitHub CI는 PostgreSQL 서비스에 연결해서 테스트합니다.
+
+### 주행 준비 API
+
+- `POST /api/v1/drives`는 주행 준비 세션을 생성합니다. 커플당 준비·주행·일시중단 상태를 합쳐 한 건만 저장할 수 있습니다.
+- `GET /api/v1/drives/active`는 현재 커플의 진행 가능한 세션을 조회합니다. 해당 세션이 없으면 `data.drive`가 `null`입니다.
+- `POST /api/v1/drives/{driveId}/cancel`은 `expectedVersion`이 일치하는 준비 세션을 취소합니다.
+
+생성·취소에는 `Idempotency-Key`와 `X-Couple-Id`가 필요합니다. 동일 사용자와 커플이 24시간 안에 같은 키로 같은 요청을 다시 보내면 원래 응답 데이터를 돌려줍니다. 키가 만료되면 새 요청으로 처리합니다.
+
+인증 모듈은 서블릿 `Principal`에 검증한 서비스 사용자 ID를 설정하고, 커플 모듈은 `CurrentCoupleLookup`으로 현재 연결과 두 멤버를 제공해야 합니다. 경로를 지정하는 준비 요청은 `DriveRouteLookup`이 제공하는 접근 가능한 경로를 사용합니다. 현재 통합 테스트는 서버 측 테스트 구현으로 각 연동을 검증합니다.
 
 PostgreSQL 데이터는 Docker의 `postgres-data` 볼륨에 보존됩니다. PostgreSQL18 공식 이미지의 볼륨 경로는 `/var/lib/postgresql`입니다. 초기 DB·계정·비밀번호 환경변수는 빈 볼륨을 처음 초기화할 때 적용됩니다. [공식 이미지 안내](https://hub.docker.com/_/postgres)를 참고하세요.
 
