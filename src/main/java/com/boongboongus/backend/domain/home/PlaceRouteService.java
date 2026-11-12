@@ -74,6 +74,17 @@ class PlaceRouteService implements DriveRouteLookup {
                 .map(row -> new Route(row.input().origin(), row.input().destination()));
     }
 
+    @Override
+    public Optional<LiveRoute> findLiveForDrive(String userId, String coupleId, String routeId) {
+        try {
+            StoredRoute route = accessible(userId, coupleId, routeId);
+            var directions = kakao.find(route.input());
+            return Optional.of(new LiveRoute(routeId, directions.polyline(), directions.roads()));
+        } catch (HomeExploreException exception) {
+            throw new LiveRouteUnavailable();
+        }
+    }
+
     private StoredRoute accessible(String userId, String coupleId, String routeId) {
         StoredRoute row = lookup(routeId).orElseThrow(() -> notFound("경로를 찾을 수 없습니다."));
         boolean attached = coupleId != null && jdbc.sql("""

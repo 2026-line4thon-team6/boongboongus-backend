@@ -5,6 +5,7 @@ import java.text.Normalizer;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
@@ -57,7 +58,14 @@ class PlaceSearchHistory {
                 SELECT id FROM place_search_history WHERE user_id = :user AND normalized_query = :normalized FOR UPDATE
                 """).param("user", userId).param("normalized", normalized).query(String.class).optional();
         String id = stored.orElseGet(() -> "srch_" + UUID.randomUUID());
-        Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        var latest = jdbc.sql("""
+                SELECT searched_at FROM place_search_history
+                WHERE user_id = :user ORDER BY searched_at DESC LIMIT 1
+                """).param("user", userId).query(OffsetDateTime.class).optional();
+        if (latest.isPresent() && !now.isAfter(latest.get().toInstant())) {
+            now = latest.get().toInstant().plus(1, ChronoUnit.MICROS);
+        }
         if (stored.isPresent()) {
             jdbc.sql("""
                     UPDATE place_search_history SET query = :query, searched_at = :now WHERE id = :id

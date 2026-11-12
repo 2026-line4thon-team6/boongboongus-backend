@@ -115,7 +115,7 @@ public class DrivePreparationController {
         return ApiResponse.success(service.resume(principal, coupleId, key, driveId, request));
     }
 
-    private static void validateControlHeaders(String driveId, String coupleId, String key) {
+    static void validateControlHeaders(String driveId, String coupleId, String key) {
         validateIdentifier(driveId, 1, 80, "driveId");
         validateIdentifier(coupleId, 1, 80, "X-Couple-Id");
         validateIdentifier(key, 16, 128, "Idempotency-Key");
@@ -145,7 +145,7 @@ public class DrivePreparationController {
         return ApiResponse.success(service.endDrive(principal, coupleId, key, driveId, request));
     }
 
-    private static void validateIdentifier(String value, int min, int max, String field) {
+    static void validateIdentifier(String value, int min, int max, String field) {
         if (value.isBlank() || value.length() < min || value.length() > max) {
             throw new DriveApiException(HttpStatus.BAD_REQUEST, "BAD_REQUEST", field + " 값을 확인해 주세요.");
         }
@@ -153,6 +153,10 @@ public class DrivePreparationController {
 
     @ExceptionHandler(DriveApiException.class)
     ResponseEntity<ErrorResponse> handleDriveError(DriveApiException error) {
+        return driveErrorResponse(error);
+    }
+
+    static ResponseEntity<ErrorResponse> driveErrorResponse(DriveApiException error) {
         ErrorResponse body = ErrorResponse.of(error.code(), error.getMessage(), List.of());
         if (error.status() == HttpStatus.SERVICE_UNAVAILABLE) {
             body = new ErrorResponse(new ErrorResponse.ErrorDetail(
