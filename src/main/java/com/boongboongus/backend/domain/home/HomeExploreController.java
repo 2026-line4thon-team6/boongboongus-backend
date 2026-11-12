@@ -78,14 +78,14 @@ public class HomeExploreController {
         return ApiResponse.success(service.detail(userId, placeId, coordinate(latitude, longitude)));
     }
 
-    private static String userId(Principal principal) {
+    static String userId(Principal principal) {
         if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
             throw new HomeExploreException(HttpStatus.UNAUTHORIZED, "AUTHENTICATION_REQUIRED", "로그인이 필요합니다.");
         }
         return principal.getName();
     }
 
-    private static Coordinate coordinate(Double latitude, Double longitude) {
+    static Coordinate coordinate(Double latitude, Double longitude) {
         if (latitude == null && longitude == null) {
             return null;
         }

@@ -116,7 +116,7 @@ class HomeExploreService {
         }
     }
 
-    private static PlaceSummary summarize(PlaceCatalog source, String userId, Place place, Coordinate location) {
+    PlaceSummary summarize(PlaceCatalog source, String userId, Place place, Coordinate location) {
         return new PlaceSummary(place.id(), place.name(), place.region(), place.address(), place.coordinate(),
                 place.thumbnailUrl(), place.category(), place.hashtags(), null,
                 location == null ? null : distanceMeters(location, place.coordinate()),
@@ -146,11 +146,11 @@ class HomeExploreService {
         return 0;
     }
 
-    private static String encodeToken(String value) {
+    static String encodeToken(String value) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(value.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static String decodeToken(String token, String prefix) {
+    static String decodeToken(String token, String prefix) {
         if (token == null) {
             return null;
         }
@@ -179,7 +179,7 @@ class HomeExploreService {
         return 12_742_000 * Math.asin(Math.sqrt(Math.clamp(angle, 0, 1)));
     }
 
-    private static <T> T requiredSource(ObjectProvider<T> provider, String message) {
+    static <T> T requiredSource(ObjectProvider<T> provider, String message) {
         T source = provider.getIfAvailable();
         if (source == null) {
             throw new HomeExploreException(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE", message);
@@ -187,7 +187,7 @@ class HomeExploreService {
         return source;
     }
 
-    private static HomeExploreException notFound(String message) {
+    static HomeExploreException notFound(String message) {
         return new HomeExploreException(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", message);
     }
 
