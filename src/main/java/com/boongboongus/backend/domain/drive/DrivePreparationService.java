@@ -11,6 +11,7 @@ import java.security.Principal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -26,6 +27,7 @@ import tools.jackson.databind.json.JsonMapper;
 @Service
 class DrivePreparationService {
     private static final Duration REPLAY_WINDOW = Duration.ofHours(24);
+    private static final Duration LATE_GPS_WINDOW = Duration.ofMinutes(15);
     private static final String DEFAULT_TITLE = "우리의 드라이브";
 
     private final DrivePreparationStore store;
@@ -56,7 +58,7 @@ class DrivePreparationService {
                     "drv_" + UUID.randomUUID(), coupleId, normalizeTitle(request.title()),
                     "PREPARING", request.driverUserId(), request.passengerUserId(), request.recorderUserId(),
                     request.routeId(), route == null ? null : route.origin(),
-                    route == null ? null : route.destination(), 1, null, null, 0, 0);
+                    route == null ? null : route.destination(), 1);
             if (!store.insert(drive)) {
                 throw error(HttpStatus.CONFLICT, "ACTIVE_DRIVE_EXISTS", "커플에 이미 진행 가능한 주행이 있습니다.");
             }
@@ -136,6 +138,88 @@ class DrivePreparationService {
         return changePhase(principal, coupleId, key, driveId, request, "resume", "PAUSED", store::resume);
     }
 
+    DriveGps.Receipt uploadGpsBatch(Principal principal, String coupleId, String key, String driveId,
+            DriveGpsRequest.Batch request) {
+        Actor actor = currentActor(principal);
+        requireMatchingCouple(actor, coupleId);
+        return executeOnce(actor, key, List.of("gps-batch", driveId, request), DriveGps.Receipt.class, () -> {
+            DriveRow drive = store.lockDrive(coupleId, driveId).orElseThrow(DrivePreparationService::driveNotFound);
+            if (!drive.recorderUserId().equals(actor.userId())) {
+                throw error(HttpStatus.FORBIDDEN, "GPS_RECORDER_ONLY", "기록 사용자만 GPS 좌표를 보낼 수 있습니다.");
+            }
+            if (!List.of("ACTIVE", "PAUSED", "ENDED").contains(drive.status())) {
+                throw stateConflict();
+            }
+            Instant now = controlTime(drive);
+            if (drive.endedAt() != null && now.isAfter(drive.endedAt().plus(LATE_GPS_WINDOW))) {
+                throw error(HttpStatus.GONE, "GPS_UPLOAD_WINDOW_CLOSED", "GPS 업로드 가능 시간이 지났습니다.");
+            }
+            return recordGpsBatch(drive, request, now);
+        });
+    }
+
+    private DriveGps.Receipt recordGpsBatch(DriveRow drive, DriveGpsRequest.Batch request, Instant now) {
+        var pauses = store.pauses(drive.id());
+        // ponytail: scan this drive's samples per batch. Incrementally update adjacent segments if load warrants it.
+        var history = store.gpsHistory(drive.id());
+        List<Integer> accepted = new ArrayList<>();
+        List<Integer> duplicates = new ArrayList<>();
+        List<DriveGps.Rejection> rejected = new ArrayList<>();
+        for (DriveGpsRequest.Sample input : request.samples()) {
+            DriveGps.Sample existing = history.get(input.sequence());
+            if (existing != null && existing.coordinate() != null) {
+                duplicates.add(input.sequence());
+                continue;
+            }
+            DriveGps.Sample sample = DriveGps.from(input);
+            String rejection = DriveGps.rejection(input, sample, history, drive, pauses, now);
+            if (rejection == null) {
+                accepted.add(input.sequence());
+            } else {
+                rejected.add(new DriveGps.Rejection(input.sequence(), rejection));
+                if (!"ACCURACY_TOO_LOW".equals(rejection)) {
+                    continue;
+                }
+                // Keep a time marker so low accuracy breaks arrival dwell, without retaining its coordinates.
+                sample = new DriveGps.Sample(sample.sequence(), sample.recordedAt(), null);
+            }
+            store.saveGpsSample(drive.id(), sample, existing != null);
+            history.put(sample.sequence(), sample);
+        }
+        var destination = drive.destination() == null ? null : drive.destination().coordinate();
+        DriveGps.Summary summary = DriveGps.summarize(history, destination, pauses);
+        store.updateGpsMetrics(drive.id(), summary);
+        return new DriveGps.Receipt(accepted, duplicates, rejected, summary.highestContiguousSequence(),
+                drive.endedAt() == null && summary.arrivalCandidate(),
+                findDrive(drive.coupleId(), drive.id()).view(now), List.of());
+    }
+
+    DriveView endDrive(Principal principal, String coupleId, String key, String driveId, DriveGpsRequest.End request) {
+        Actor actor = currentActor(principal);
+        requireMatchingCouple(actor, coupleId);
+        return executeOnce(actor, key, List.of("end", driveId, request), () -> {
+            DriveRow drive = lockVersion(coupleId, driveId, request.expectedVersion());
+            if (!"ACTIVE".equals(drive.status()) && !"PAUSED".equals(drive.status())) {
+                throw stateConflict();
+            }
+            if (request.reason() == DriveGpsRequest.EndReason.ARRIVED) {
+                verifyArrival(drive, request.lastRecordedSequence());
+            }
+            Instant now = controlTime(drive);
+            store.end(drive, request.reason(), now);
+            return findDrive(coupleId, driveId).view(now);
+        });
+    }
+
+    private void verifyArrival(DriveRow drive, int lastRecordedSequence) {
+        var history = store.gpsHistory(drive.id());
+        var destination = drive.destination() == null ? null : drive.destination().coordinate();
+        if (history.isEmpty() || history.lastKey() != lastRecordedSequence
+                || !DriveGps.summarize(history, destination, store.pauses(drive.id())).arrivalCandidate()) {
+            throw error(HttpStatus.UNPROCESSABLE_CONTENT, "ARRIVAL_NOT_VERIFIED", "GPS로 목적지 도착을 확인하지 못했습니다.");
+        }
+    }
+
     private DriveView changePhase(Principal principal, String coupleId, String key, String driveId,
             DrivePreparationRequest.Version request, String operation, String requiredState,
             BiConsumer<DriveRow, Instant> change) {
@@ -196,6 +280,10 @@ class DrivePreparationService {
     }
 
     private DriveView executeOnce(Actor actor, String key, List<?> intent, Supplier<DriveView> action) {
+        return executeOnce(actor, key, intent, DriveView.class, action);
+    }
+
+    private <T> T executeOnce(Actor actor, String key, List<?> intent, Class<T> resultType, Supplier<T> action) {
         RequestKey requestKey = new RequestKey(actor.couple().id(), actor.userId(), key);
         String fingerprint = fingerprint(intent);
         return Objects.requireNonNull(transaction.execute(status -> {
@@ -209,10 +297,10 @@ class DrivePreparationService {
                         throw error(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED",
                                 "같은 멱등 키에 다른 요청을 사용할 수 없습니다.");
                     }
-                    return json.readValue(previous.responseSnapshot(), DriveView.class);
+                    return json.readValue(previous.responseSnapshot(), resultType);
                 }
             }
-            DriveView result = action.get();
+            T result = action.get();
             store.saveResult(requestKey, fingerprint, Instant.now().plus(REPLAY_WINDOW), result);
             return result;
         }));

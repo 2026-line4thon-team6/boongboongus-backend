@@ -326,6 +326,132 @@ class DrivePreparationIntegrationTest {
                 .param("id", id).query(Long.class).single()).isEqualTo(1L);
     }
 
+    @Test
+    void acceptsOnlyRecorderSamplesAndDoesNotCountAcrossPausesOrDuplicates() throws Exception {
+        String recorder = couple + "_b";
+        String id = startRoutedDrive(recorder);
+        Instant baseline = Instant.now().minusSeconds(80);
+        setDriveStart(id, baseline);
+        jdbc.sql("""
+                INSERT INTO drive_pause_periods (drive_id, pause_version, paused_at, resumed_at)
+                VALUES (:id, 3, :paused, :resumed)
+                """).param("id", id).param("paused", baseline.plusSeconds(20).atOffset(ZoneOffset.UTC))
+                .param("resumed", baseline.plusSeconds(40).atOffset(ZoneOffset.UTC)).update();
+        String body = batch(sample(1, baseline.plusSeconds(5), 37.5, 8),
+                sample(2, baseline.plusSeconds(15), 37.5001, 8),
+                sample(3, baseline.plusSeconds(30), 37.55, 8),
+                sample(4, baseline.plusSeconds(45), 37.6, 8),
+                sample(5, baseline.plusSeconds(55), 37.6001, 8));
+        mvc.perform(control(couple + "_a", id, "gps-batches", key(), body))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.error.code").value("GPS_RECORDER_ONLY"));
+        String uploadKey = key();
+        mvc.perform(control(recorder, id, "gps-batches", uploadKey, body))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.acceptedSequences.length()").value(4))
+                .andExpect(jsonPath("$.data.rejected[0].reason").value("OUTSIDE_RECORDING_INTERVAL"))
+                .andExpect(jsonPath("$.data.highestContiguousSequence").value(2))
+                .andExpect(jsonPath("$.data.drive.controlVersion").value(2));
+        double distance = gpsDistance(id);
+        assertThat(distance).isBetween(22.0, 23.0);
+        mvc.perform(control(recorder, id, "gps-batches", uploadKey, body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences.length()").value(4));
+        mvc.perform(control(recorder, id, "gps-batches", key(), body))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.duplicateSequences.length()").value(4));
+        assertThat(gpsDistance(id)).isEqualTo(distance);
+    }
+
+    @Test
+    void verifiesArrivalOnlyWithContinuousAccurateSamplesAndReplaysEnd() throws Exception {
+        String recorder = couple + "_b";
+        String id = startRoutedDrive(recorder);
+        Instant baseline = Instant.now().minusSeconds(75);
+        setDriveStart(id, baseline);
+        String partial = batch(sample(1, baseline.plusSeconds(5), 37.6, 8),
+                sample(2, baseline.plusSeconds(15), 37.6, 8),
+                sample(3, baseline.plusSeconds(25), 37.6, 75),
+                sample(4, baseline.plusSeconds(35), 37.6, 8));
+        mvc.perform(control(recorder, id, "gps-batches", key(), partial))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.rejected[0].reason").value("ACCURACY_TOO_LOW"))
+                .andExpect(jsonPath("$.data.arrivalCandidate").value(false));
+        String end = """
+                {"expectedVersion":2,"reason":"ARRIVED","lastRecordedSequence":4}
+                """;
+        String endKey = key();
+        mvc.perform(control(couple + "_a", id, "end", endKey, end))
+                .andExpect(status().is(422)).andExpect(jsonPath("$.error.code").value("ARRIVAL_NOT_VERIFIED"));
+        mvc.perform(control(recorder, id, "gps-batches", key(),
+                batch(sample(3, baseline.plusSeconds(25), 37.6, 8))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.arrivalCandidate").value(true))
+                .andExpect(jsonPath("$.data.highestContiguousSequence").value(4));
+        MvcResult result = mvc.perform(control(couple + "_a", id, "end", endKey, end))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ENDED"))
+                .andExpect(jsonPath("$.data.endReason").value("ARRIVED"))
+                .andExpect(jsonPath("$.data.canCreateCard").value(true))
+                .andExpect(jsonPath("$.data.controlVersion").value(3))
+                .andReturn();
+        var data = json.readTree(result.getResponse().getContentAsString(StandardCharsets.UTF_8)).path("data");
+        Instant endedAt = Instant.parse(data.path("endedAt").asText());
+        assertThat(Instant.parse(data.path("editableUntil").asText())).isEqualTo(endedAt.plusSeconds(86400));
+        mvc.perform(control(couple + "_a", id, "end", endKey, end)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.endedAt").value(endedAt.toString()));
+        current(recorder).andExpect(jsonPath("$.data.drive").value((Object) null));
+    }
+
+    @Test
+    void manuallyEndsPausedDriveAndAcceptsLateSamplesOnlyWithinUploadWindow() throws Exception {
+        String recorder = couple + "_b";
+        String id = startRoutedDrive(recorder);
+        Instant baseline = Instant.now().minusSeconds(60);
+        setDriveStart(id, baseline);
+        mvc.perform(control(recorder, id, "pause", key(), version(2))).andExpect(status().isOk());
+        mvc.perform(control(couple + "_a", id, "end", key(), """
+                {"expectedVersion":3,"reason":"USER_ENDED","lastRecordedSequence":2}
+                """)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.endReason").value("USER_ENDED"))
+                .andExpect(jsonPath("$.data.canCreateCard").value(true));
+        String lateBatch = batch(sample(1, baseline.plusSeconds(5), 37.6, 8),
+                sample(2, baseline.plusSeconds(15), 37.6001, 8));
+        mvc.perform(control(recorder, id, "gps-batches", key(), lateBatch))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences.length()").value(2))
+                .andExpect(jsonPath("$.data.drive.controlVersion").value(4))
+                .andExpect(jsonPath("$.data.drive.status").value("ENDED"));
+        assertThat(gpsDistance(id)).isBetween(11.0, 12.0);
+        jdbc.sql("UPDATE drives SET ended_at = :ended WHERE id = :id")
+                .param("ended", Instant.now().minusSeconds(901).atOffset(ZoneOffset.UTC)).param("id", id).update();
+        mvc.perform(control(recorder, id, "gps-batches", key(), lateBatch))
+                .andExpect(status().isGone()).andExpect(jsonPath("$.error.code").value("GPS_UPLOAD_WINDOW_CLOSED"));
+    }
+
+    private String startRoutedDrive(String recorder) throws Exception {
+        String id = driveId(mvc.perform(prepare(recorder, key(),
+                roles(couple).replace("{", "{\"routeId\":\"fixture_route\","))).andExpect(status().isCreated()));
+        mvc.perform(control(recorder, id, "start", key(), startBody(1))).andExpect(status().isOk());
+        return id;
+    }
+
+    private void setDriveStart(String driveId, Instant baseline) {
+        jdbc.sql("UPDATE drives SET started_at = :baseline, state_changed_at = :baseline WHERE id = :id")
+                .param("id", driveId).param("baseline", baseline.atOffset(ZoneOffset.UTC)).update();
+    }
+
+    private double gpsDistance(String driveId) {
+        return jdbc.sql("SELECT distance_meters FROM drives WHERE id = :id")
+                .param("id", driveId).query(Double.class).single();
+    }
+
+    private static String batch(String... samples) {
+        return "{\"samples\":[" + String.join(",", samples) + "]}";
+    }
+
+    private static String sample(int sequence, Instant recordedAt, double latitude, int accuracy) {
+        return """
+                {"sequence":%d,"recordedAt":"%s","coordinate":{"latitude":%s,"longitude":127.1},
+                "accuracyMeters":%d,"speedMetersPerSecond":null}
+                """.formatted(sequence, recordedAt, latitude, accuracy);
+    }
+
     private MockHttpServletRequestBuilder update(String user, String driveId, String body) {
         return patch(BASE + "/{id}", driveId).principal(() -> user).header("X-Couple-Id", couple)
                 .contentType(MediaType.APPLICATION_JSON).content(body);
