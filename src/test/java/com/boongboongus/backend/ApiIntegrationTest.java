@@ -51,6 +51,36 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void appConfigReturnsPublicPolicyWithoutAuthentication() throws Exception {
+        mvc.perform(get("/api/v1/app-config"))
+                .andExpect(status().isOk())
+                .andExpect(header().exists("X-Request-Id"))
+                .andExpect(jsonPath("$.meta.requestId").isNotEmpty())
+                .andExpect(jsonPath("$.meta.serverTime").isNotEmpty())
+                .andExpect(jsonPath("$.data.apiVersion").value("v1"))
+                .andExpect(jsonPath("$.data.contractVersion").isNotEmpty())
+                .andExpect(jsonPath("$.data.policyVersion").isNotEmpty())
+                .andExpect(jsonPath("$.data.policyStatus").value("APPROVED"))
+                .andExpect(jsonPath("$.data.timezone").value("Asia/Seoul"))
+                .andExpect(jsonPath("$.data.limits.nicknameMaxLength").value(20))
+                .andExpect(jsonPath("$.data.limits.uploadMimeTypes[0]").value("image/jpeg"))
+                .andExpect(jsonPath("$.data.features.coupleRequiredForDrive").value(true))
+                .andExpect(jsonPath("$.data.features.freeDriveWithoutDestination").value(false))
+                .andExpect(jsonPath("$.data.features.restAreaDetails").value(false))
+                .andExpect(jsonPath("$.data.features.musicPlayback").value(false))
+                .andExpect(jsonPath("$.data.authProviders[0]").value("KAKAO"))
+                .andExpect(jsonPath("$.data.moods").isNotEmpty())
+                .andExpect(jsonPath("$.data.weatherOptions").isNotEmpty())
+                .andExpect(jsonPath("$.data.genres").isNotEmpty())
+                .andExpect(jsonPath("$.data.gpsBatchMaxSamples").value(200))
+                .andExpect(jsonPath("$.data.gpsLateUploadGraceSeconds").value(900))
+                .andExpect(jsonPath("$.data.arrivalRadiusMeters").value(100))
+                .andExpect(jsonPath("$.data.arrivalDwellSeconds").value(30))
+                .andExpect(jsonPath("$.data.gameSetQuestionCount").value(5))
+                .andExpect(jsonPath("$.data.defaultMascotName").value("붕붕이"));
+    }
+
+    @Test
     void unknownRouteUsesCommonErrorContract() throws Exception {
         mvc.perform(get("/api/v1/not-implemented"))
                 .andExpect(status().isNotFound())
@@ -94,10 +124,11 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void openApiDocumentsImplementedHealthRoute() throws Exception {
+    void openApiDocumentsImplementedRoutes() throws Exception {
         mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/health']").exists());
+                .andExpect(jsonPath("$.paths['/api/v1/health']").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/app-config'].get").exists());
     }
 
     @TestConfiguration(proxyBeanMethods = false)

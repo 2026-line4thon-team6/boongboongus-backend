@@ -28,11 +28,18 @@ chmod +x gradlew
 | 주소 | 용도 |
 | --- | --- |
 | http://localhost:8080/api/v1/health | API 응답 및 공통 응답 형식 확인 |
+| http://localhost:8080/api/v1/app-config | 로그인 전 앱 설정과 기능 활성화 여부 조회 |
+| http://localhost:8080/api/v1/legal-documents | 현재 약관 목록과 본문 조회 |
+| http://localhost:8080/api/v1/faqs | FAQ 질문과 답변 조회 |
 | http://localhost:8080/actuator/health | 서버·DB 상태 확인 |
 | http://localhost:8080/swagger-ui.html | 구현된 API 문서 |
 | http://localhost:8080/v3/api-docs | OpenAPI JSON |
 
-현재 구현된 업무 외 엔드포인트는 상태 확인 API입니다. 주행·인증·커플 등 서비스 기능은 이후 도메인별로 구현합니다. Swagger에는 실제 구현된 API만 표시됩니다.
+앱 설정 API는 `application.yml`의 `app.public-config` 값을 반환합니다. 앱 내 음악 재생과 휴게소 상세는 연동 전까지 비활성화합니다. 주행·인증·커플 등 서비스 기능은 이후 도메인별로 구현합니다. Swagger에는 실제 구현된 API만 표시됩니다.
+
+약관은 `src/main/resources/legal-documents.yml`의 `app.legal.documents`에 등록하고 백엔드를 배포하면 반영됩니다. 각 항목에 `type`, `version`, `title`, `url`, `content`, `effective-date`를 넣습니다. `TERMS`와 `PRIVACY`는 필수, `OPEN_SOURCE`는 고지용입니다. 목록과 버전 생략 상세는 한국 날짜 기준으로 시행일이 가장 최근인 문서를 반환합니다. 시행일이 같으면 파일에서 뒤에 등록한 항목을 사용합니다. 상세 경로 `/api/v1/legal-documents/{type}?version=...`에서 등록된 특정 버전을 확인할 수 있으므로, 문서를 바꿀 때는 기존 버전을 보관하고 새 버전을 추가합니다. 팀이 확정한 원문을 등록하기 전에는 목록이 비어 있습니다.
+
+FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `answer`, `order`를 등록하고 백엔드를 배포하면 반영됩니다. 조회 결과는 `order` 오름차순이고, 등록된 항목이 없으면 빈 목록을 반환합니다.
 
 ## PostgreSQL 개발 환경
 

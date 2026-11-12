@@ -2,7 +2,10 @@ spring:
   application:
     name: boongboongus-backend
   config:
-    import: optional:file:.env[.properties]
+    import:
+      - optional:file:.env[.properties]
+      - classpath:legal-documents.yml
+      - classpath:faqs.yml
   profiles:
     default: local
   jpa:
@@ -37,6 +40,41 @@ management:
 app:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+  # Values under public-config are returned by GET /api/v1/app-config.
+  public-config:
+    api-version: v1
+    contract-version: 0.4.0-draft
+    policy-version: drive-policy-2026-11-07-v1
+    policy-status: APPROVED
+    timezone: Asia/Seoul
+    limits:
+      nickname-max-length: 20
+      drive-title-max-length: 50
+      card-photo-max-count: 2
+      reflection-max-length: 70
+      radio-story-max-length: 300
+      recent-search-max-count: 30
+      recommended-place-count: 7
+      rest-area-menu-max-count: 4
+      mood-max-count: 2
+      genre-max-count: 3
+      upload-max-bytes: 10485760
+      upload-mime-types: [image/jpeg, image/png, image/webp]
+    features:
+      couple-required-for-drive: true
+      free-drive-without-destination: false
+      rest-area-details: false
+      music-playback: false
+    auth-providers: [KAKAO]
+    moods: [EXCITING, EMOTIONAL, CALM, TRAVEL, FLUTTER, SUNSET, CITY_NIGHT, ROMANTIC]
+    weather-options: [SUNNY, CLOUDY, RAIN, SNOW, WINDY]
+    genres: [BALLAD, K_POP, INDIE, HIP_HOP, CITY_POP, JAZZ, RNB, POP, ACOUSTIC, DANCE, OST, ROCK]
+    gps-batch-max-samples: 200
+    gps-late-upload-grace-seconds: 900
+    arrival-radius-meters: 100
+    arrival-dwell-seconds: 30
+    game-set-question-count: 5
+    default-mascot-name: 붕붕이
 
 springdoc:
   api-docs:
