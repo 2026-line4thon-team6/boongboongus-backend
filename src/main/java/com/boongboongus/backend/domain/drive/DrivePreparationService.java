@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
@@ -25,7 +26,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 @Service
-class DrivePreparationService {
+public class DrivePreparationService {
     private static final Duration REPLAY_WINDOW = Duration.ofHours(24);
     private static final Duration LATE_GPS_WINDOW = Duration.ofMinutes(15);
     private static final String DEFAULT_TITLE = "우리의 드라이브";
@@ -69,6 +70,10 @@ class DrivePreparationService {
     DriveView active(Principal principal) {
         Actor actor = currentActor(principal);
         return store.findActive(actor.couple().id()).map(DriveRow::view).orElse(null);
+    }
+
+    public Optional<String> findActiveDriveId(String coupleId) {
+        return store.findActive(coupleId).map(DriveRow::id);
     }
 
     DriveView cancel(Principal principal, String coupleId, String key, String driveId,
