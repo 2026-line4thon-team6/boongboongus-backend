@@ -32,13 +32,15 @@ class HomeExploreService {
     private final ObjectProvider<HomeContextLookup> context;
     private final ObjectProvider<PlaceCatalog> catalog;
     private final DrivePreparationService drives;
+    private final FavoritePlaceStore favorites;
 
     HomeExploreService(ObjectProvider<HomeDataSource> home, ObjectProvider<HomeContextLookup> context,
-            ObjectProvider<PlaceCatalog> catalog, DrivePreparationService drives) {
+            ObjectProvider<PlaceCatalog> catalog, DrivePreparationService drives, FavoritePlaceStore favorites) {
         this.home = home;
         this.context = context;
         this.catalog = catalog;
         this.drives = drives;
+        this.favorites = favorites;
     }
 
     HomeView home(String userId, Coordinate location) {
@@ -120,7 +122,7 @@ class HomeExploreService {
         return new PlaceSummary(place.id(), place.name(), place.region(), place.address(), place.coordinate(),
                 place.thumbnailUrl(), place.category(), place.hashtags(), null,
                 location == null ? null : distanceMeters(location, place.coordinate()),
-                source.isFavorite(userId, place.id()));
+                favorites.contains(userId, place.id()) || source.isFavorite(userId, place.id()));
     }
 
     private static List<Place> unique(List<Place> places) {
