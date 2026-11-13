@@ -1,10 +1,24 @@
 package com.boongboongus.backend.domain.drive;
 
+import java.util.List;
 import java.util.Optional;
 
 /** Finds an unexpired route the authenticated user can attach to their current couple's drive. */
 public interface DriveRouteLookup {
     Optional<Route> findAccessible(String userId, String coupleId, String routeId);
+
+    default Optional<LiveRoute> findLiveForDrive(String userId, String coupleId, String routeId) {
+        return Optional.empty();
+    }
+
+    final class LiveRouteUnavailable extends RuntimeException {
+    }
+
+    record LiveRoute(String routeId, String polyline, List<Road> roads) {
+    }
+
+    record Road(String name, List<Coordinate> vertices) {
+    }
 
     record Route(Place origin, Place destination) {
     }

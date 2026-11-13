@@ -30,7 +30,7 @@ final class DriveGps {
     }
 
     record Receipt(List<Integer> acceptedSequences, List<Integer> duplicateSequences, List<Rejection> rejected,
-            int highestContiguousSequence, boolean arrivalCandidate, DriveView drive, List<Object> restAreaAlerts) {
+            int highestContiguousSequence, boolean arrivalCandidate, DriveView drive, List<RestAreaService.Alert> restAreaAlerts) {
     }
 
     record Summary(double distanceMeters, Instant lastGpsAt, String gpsQuality, int highestContiguousSequence,
@@ -142,7 +142,7 @@ final class DriveGps {
         return interval;
     }
 
-    private static double meters(Coordinate from, Coordinate to) {
+    static double meters(Coordinate from, Coordinate to) {
         double lat = Math.toRadians(to.latitude() - from.latitude());
         double lon = Math.toRadians(to.longitude() - from.longitude());
         double sinLat = Math.sin(lat / 2);

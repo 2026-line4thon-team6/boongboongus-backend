@@ -37,16 +37,18 @@ public class DrivePreparationService {
     private final ObjectProvider<DriveLocationConsentLookup> locationConsents;
     private final TransactionTemplate transaction;
     private final JsonMapper json;
+    private final RestAreaService restAreas;
 
     DrivePreparationService(DrivePreparationStore store, ObjectProvider<CurrentCoupleLookup> couples,
             ObjectProvider<DriveRouteLookup> routes, ObjectProvider<DriveLocationConsentLookup> locationConsents,
-            TransactionTemplate transaction, JsonMapper json) {
+            TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas) {
         this.store = store;
         this.couples = couples;
         this.routes = routes;
         this.locationConsents = locationConsents;
         this.transaction = transaction;
         this.json = json;
+        this.restAreas = restAreas;
     }
 
     DriveView prepare(Principal principal, String coupleId, String key, DrivePreparationRequest request) {
@@ -194,9 +196,17 @@ public class DrivePreparationService {
         var destination = drive.destination() == null ? null : drive.destination().coordinate();
         DriveGps.Summary summary = DriveGps.summarize(history, destination, pauses);
         store.updateGpsMetrics(drive.id(), summary);
+        List<RestAreaService.Alert> alerts = List.of();
+        if (!accepted.isEmpty()) {
+            var latest = history.descendingMap().values().stream()
+                    .filter(sample -> sample.coordinate() != null).findFirst();
+            if (latest.isPresent() && accepted.contains(latest.get().sequence())) {
+                alerts = restAreas.approachAlerts(drive, latest.get().coordinate(), now);
+            }
+        }
         return new DriveGps.Receipt(accepted, duplicates, rejected, summary.highestContiguousSequence(),
                 drive.endedAt() == null && summary.arrivalCandidate(),
-                findDrive(drive.coupleId(), drive.id()).view(now), List.of());
+                findDrive(drive.coupleId(), drive.id()).view(now), alerts);
     }
 
     DriveView endDrive(Principal principal, String coupleId, String key, String driveId, DriveGpsRequest.End request) {
@@ -320,11 +330,22 @@ public class DrivePreparationService {
         }
     }
 
-    private Actor currentActor(Principal principal) {
+    private static String userId(Principal principal) {
         if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
             throw error(HttpStatus.UNAUTHORIZED, "AUTHENTICATION_REQUIRED", "로그인이 필요합니다.");
         }
-        String userId = principal.getName();
+        return principal.getName();
+    }
+
+    String optionalCoupleId(Principal principal) {
+        String user = userId(principal);
+        CurrentCoupleLookup lookup = couples.getIfAvailable();
+        return lookup == null ? null : lookup.findCurrent(user).filter(couple -> couple.contains(user))
+                .map(Couple::id).orElse(null);
+    }
+
+    Actor currentActor(Principal principal) {
+        String userId = userId(principal);
         CurrentCoupleLookup lookup = couples.getIfAvailable();
         if (lookup == null) {
             throw error(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE", "커플 정보를 확인할 수 없습니다.");
@@ -337,7 +358,7 @@ public class DrivePreparationService {
         return new Actor(userId, couple);
     }
 
-    private void requireMatchingCouple(Actor actor, String requestedCoupleId) {
+    void requireMatchingCouple(Actor actor, String requestedCoupleId) {
         if (!actor.couple().id().equals(requestedCoupleId)) {
             throw error(HttpStatus.FORBIDDEN, "COUPLE_CONTEXT_CHANGED", "현재 커플 정보를 다시 확인해 주세요.");
         }
@@ -367,6 +388,6 @@ public class DrivePreparationService {
         return new DriveApiException(status, code, message);
     }
 
-    private record Actor(String userId, Couple couple) {
+    record Actor(String userId, Couple couple) {
     }
 }

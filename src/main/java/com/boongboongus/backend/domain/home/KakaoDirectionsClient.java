@@ -4,6 +4,7 @@ import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -66,10 +67,13 @@ class KakaoDirectionsClient {
                 || route.sections().size() != input.waypoints().size() + 1) {
             throw unavailable();
         }
-        return new Directions(encodePolyline(route.sections()), summary.distance(), summary.duration());
+        var roads = new ArrayList<com.boongboongus.backend.domain.drive.DriveRouteLookup.Road>();
+        String polyline = encodePolyline(route.sections(), roads);
+        return new Directions(polyline, summary.distance(), summary.duration(), List.copyOf(roads));
     }
 
-    private static String encodePolyline(List<Section> sections) {
+    private static String encodePolyline(List<Section> sections,
+            List<com.boongboongus.backend.domain.drive.DriveRouteLookup.Road> roads) {
         var polyline = new StringBuilder();
         long previousLat = 0;
         long previousLng = 0;
@@ -83,6 +87,7 @@ class KakaoDirectionsClient {
                         || road.vertexes().size() % 2 != 0) {
                     throw unavailable();
                 }
+                var vertices = new ArrayList<Coordinate>();
                 for (int i = 0; i < road.vertexes().size(); i += 2) {
                     Double lng = road.vertexes().get(i);
                     Double lat = road.vertexes().get(i + 1);
@@ -90,6 +95,7 @@ class KakaoDirectionsClient {
                             || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
                         throw unavailable();
                     }
+                    vertices.add(new Coordinate(lat, lng));
                     long nextLat = Math.round(lat * 100_000);
                     long nextLng = Math.round(lng * 100_000);
                     if (points == 0 || previousLat != nextLat || previousLng != nextLng) {
@@ -100,6 +106,8 @@ class KakaoDirectionsClient {
                     previousLat = nextLat;
                     previousLng = nextLng;
                 }
+                roads.add(new com.boongboongus.backend.domain.drive.DriveRouteLookup.Road(
+                        road.name(), List.copyOf(vertices)));
             }
         }
         if (points < 2) {
@@ -126,7 +134,8 @@ class KakaoDirectionsClient {
                 "카카오모빌리티 경로를 사용할 수 없습니다.");
     }
 
-    record Directions(String polyline, int distanceMeters, int durationSeconds) {
+    record Directions(String polyline, int distanceMeters, int durationSeconds,
+            List<com.boongboongus.backend.domain.drive.DriveRouteLookup.Road> roads) {
     }
 
     record RoutePage(List<ProviderRoute> routes) {
@@ -141,6 +150,6 @@ class KakaoDirectionsClient {
     record Section(List<Road> roads) {
     }
 
-    record Road(List<Double> vertexes) {
+    record Road(String name, List<Double> vertexes) {
     }
 }
