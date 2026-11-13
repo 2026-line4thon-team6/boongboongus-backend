@@ -1,5 +1,6 @@
 package com.boongboongus.backend.domain.drive;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -12,6 +13,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -46,6 +49,7 @@ class RestAreaStampIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired JdbcClient jdbc;
+    @Autowired StampService stamps;
     @Autowired JsonMapper json;
 
     @BeforeEach
@@ -86,6 +90,98 @@ class RestAreaStampIntegrationTest {
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.restAreaAlerts.length()").value(0));
     }
 
+    @Test
+    void gpsEvidenceResolvesPendingAndBothMembersSeeTheSameUniqueStamp() throws Exception {
+        String couple = uniqueCouple();
+        String drive = start(couple);
+        String key = UUID.randomUUID().toString();
+        var pending = data(mvc.perform(write(API + "/drives/" + drive + "/stamp-claims", couple,
+                recorder(couple), key, claim(NORTH, "MANUAL")))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.status").value("PENDING"))
+                .andReturn());
+        String claimId = pending.path("id").asText();
+        Instant recorded = Instant.now().minusSeconds(45);
+        mvc.perform(gps(couple, drive, 1, 37.02, 127.0004, 51, recorded))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.rejected[0].reason").value("ACCURACY_TOO_LOW"));
+        mvc.perform(get(API + "/stamp-claims/" + claimId).principal(() -> partner(couple)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("PENDING"));
+        mvc.perform(gps(couple, drive, 1, 37.02, 127.0004, 50, recorded))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences[0]").value(1));
+        var verified = data(mvc.perform(get(API + "/stamp-claims/" + claimId).principal(() -> partner(couple)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("VERIFIED")).andReturn());
+        String stamp = verified.path("stamp").path("id").asText();
+        mvc.perform(get(API + "/stamp-claims/" + claimId).principal(() -> "outside_driver"))
+                .andExpect(status().isNotFound());
+        mvc.perform(write(API + "/drives/" + drive + "/stamp-claims", couple, recorder(couple), key,
+                claim(SOUTH, "MANUAL"))).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("IDEMPOTENCY_KEY_REUSED"));
+        mvc.perform(get(API + "/couples/me/stamps").principal(() -> partner(couple)).param("limit", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.earnedCount").value(1))
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.hasMore").value(true));
+        mvc.perform(get(API + "/rest-areas/" + NORTH).principal(() -> recorder(couple)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.restArea.earned").value(true));
+        mvc.perform(write(API + "/drives/" + drive + "/stamp-claims", couple, partner(couple),
+                UUID.randomUUID().toString(), claim(NORTH, "GPS")))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.stamp.id").value(stamp))
+                .andExpect(jsonPath("$.data.alreadyEarned").value(true));
+    }
+
+    @Test
+    void expiryRejectsExistingClaimsAndReturns422ForNewClaimsWithoutEvidence() throws Exception {
+        String couple = uniqueCouple();
+        String drive = start(couple);
+        var pending = data(mvc.perform(write(API + "/drives/" + drive + "/stamp-claims", couple,
+                recorder(couple), UUID.randomUUID().toString(), claim(NORTH, "GPS")))
+                .andExpect(status().isCreated()).andReturn());
+        mvc.perform(write(API + "/drives/" + drive + "/end", couple, recorder(couple),
+                UUID.randomUUID().toString(), """
+                {"expectedVersion":2,"reason":"USER_ENDED","lastRecordedSequence":0}
+                """)).andExpect(status().isOk());
+        mvc.perform(get(API + "/stamp-claims/" + pending.path("id").asText()).principal(() -> recorder(couple)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("PENDING"))
+                .andExpect(jsonPath("$.data.recheckUntil").isString());
+        jdbc.sql("UPDATE drives SET ended_at = :ended WHERE id = :drive")
+                .param("ended", Instant.now().minusSeconds(901).atOffset(ZoneOffset.UTC)).param("drive", drive).update();
+        stamps.expirePending();
+        mvc.perform(get(API + "/stamp-claims/" + pending.path("id").asText()).principal(() -> recorder(couple)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("REJECTED"));
+        mvc.perform(write(API + "/drives/" + drive + "/stamp-claims", couple, partner(couple),
+                UUID.randomUUID().toString(), claim(SOUTH, "MANUAL")))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.error.code").value("STAMP_LOCATION_NOT_VERIFIED"));
+    }
+
+    @Test
+    void lateGpsBeforeDeadlineVerifiesAndConcurrentNewClaimsCreateOnlyOneStamp() throws Exception {
+        String couple = uniqueCouple();
+        String drive = start(couple);
+        Instant observedAt = Instant.now().minusSeconds(40);
+        mvc.perform(write(API + "/drives/" + drive + "/end", couple, recorder(couple),
+                UUID.randomUUID().toString(), """
+                {"expectedVersion":2,"reason":"USER_ENDED","lastRecordedSequence":0}
+                """)).andExpect(status().isOk());
+        mvc.perform(gps(couple, drive, 1, 37.02, 127.0004, 12, observedAt))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences[0]").value(1));
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var first = executor.submit(() -> issueClaim(couple, drive, recorder(couple)));
+            var second = executor.submit(() -> issueClaim(couple, drive, partner(couple)));
+            JsonNode a = first.get(10, TimeUnit.SECONDS);
+            JsonNode b = second.get(10, TimeUnit.SECONDS);
+            assertThat(a.at("/stamp/id").asText()).isEqualTo(b.at("/stamp/id").asText());
+            assertThat(List.of(a.path("alreadyEarned").asBoolean(), b.path("alreadyEarned").asBoolean()))
+                    .containsExactlyInAnyOrder(false, true);
+        }
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM rest_area_stamps WHERE couple_id = :couple")
+                .param("couple", couple).query(Long.class).single()).isEqualTo(1L);
+    }
+
+    private JsonNode issueClaim(String couple, String drive, String user) throws Exception {
+        return data(mvc.perform(write(API + "/drives/" + drive + "/stamp-claims", couple, user,
+                UUID.randomUUID().toString(), claim(NORTH, "GPS")))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.data.status").value("VERIFIED")).andReturn());
+    }
+
     private void seed(String id, double longitude, int bearing, String direction) {
         jdbc.sql("""
                 INSERT INTO rest_areas (id, source_id, name, highway_name, direction, latitude, longitude, travel_bearing)
@@ -111,6 +207,12 @@ class RestAreaStampIntegrationTest {
 
     private JsonNode data(MvcResult result) {
         return json.readTree(result.getResponse().getContentAsByteArray()).path("data");
+    }
+
+    private static String claim(String id, String method) {
+        return """
+                {"restAreaId":"%s","method":"%s","coordinate":{"latitude":37.02,"longitude":127.0004}}
+                """.formatted(id, method);
     }
 
     private static MockHttpServletRequestBuilder gps(String couple, String drive, int sequence,

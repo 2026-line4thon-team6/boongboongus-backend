@@ -38,10 +38,11 @@ public class DrivePreparationService {
     private final TransactionTemplate transaction;
     private final JsonMapper json;
     private final RestAreaService restAreas;
+    private final StampService stamps;
 
     DrivePreparationService(DrivePreparationStore store, ObjectProvider<CurrentCoupleLookup> couples,
             ObjectProvider<DriveRouteLookup> routes, ObjectProvider<DriveLocationConsentLookup> locationConsents,
-            TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas) {
+            TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas, StampService stamps) {
         this.store = store;
         this.couples = couples;
         this.routes = routes;
@@ -49,6 +50,7 @@ public class DrivePreparationService {
         this.transaction = transaction;
         this.json = json;
         this.restAreas = restAreas;
+        this.stamps = stamps;
     }
 
     DriveView prepare(Principal principal, String coupleId, String key, DrivePreparationRequest request) {
@@ -198,6 +200,7 @@ public class DrivePreparationService {
         store.updateGpsMetrics(drive.id(), summary);
         List<RestAreaService.Alert> alerts = List.of();
         if (!accepted.isEmpty()) {
+            stamps.resolvePending(drive, history.values(), now);
             var latest = history.descendingMap().values().stream()
                     .filter(sample -> sample.coordinate() != null).findFirst();
             if (latest.isPresent() && accepted.contains(latest.get().sequence())) {
