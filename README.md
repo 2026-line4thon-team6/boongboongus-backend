@@ -29,11 +29,18 @@ chmod +x gradlew
 | --- | --- |
 | http://localhost:8080/api/v1/health | API 응답 및 공통 응답 형식 확인 |
 | `POST /api/v1/auth/authorizations` | 카카오 로그인 시작 및 로그인 URL 발급 |
+| http://localhost:8080/api/v1/app-config | 로그인 전 앱 설정과 기능 활성화 여부 조회 |
+| http://localhost:8080/api/v1/legal-documents | 현재 약관 목록과 본문 조회 |
+| http://localhost:8080/api/v1/faqs | FAQ 질문과 답변 조회 |
 | http://localhost:8080/actuator/health | 서버·DB 상태 확인 |
 | http://localhost:8080/swagger-ui.html | 구현된 API 문서 |
 | http://localhost:8080/v3/api-docs | OpenAPI JSON |
 
-현재 구현된 업무 외 엔드포인트는 상태 확인 API입니다. 주행·인증·커플 등 서비스 기능은 이후 도메인별로 구현합니다. Swagger에는 실제 구현된 API만 표시됩니다.
+앱 설정 API는 `application.yml`의 `app.public-config` 값을 반환합니다. 앱 내 음악 재생과 휴게소 상세는 연동 전까지 비활성화합니다. 주행·인증·커플 등 서비스 기능은 이후 도메인별로 구현합니다. Swagger에는 실제 구현된 API만 표시됩니다.
+
+약관은 `src/main/resources/legal-documents.yml`의 `app.legal.documents`에 등록하고 백엔드를 배포하면 반영됩니다. 각 항목에 `type`, `version`, `title`, `url`, `content`, `effective-date`를 넣습니다. `TERMS`와 `PRIVACY`는 필수, `OPEN_SOURCE`는 고지용입니다. 목록과 버전 생략 상세는 한국 날짜 기준으로 시행일이 가장 최근인 문서를 반환합니다. 시행일이 같으면 파일에서 뒤에 등록한 항목을 사용합니다. 상세 경로 `/api/v1/legal-documents/{type}?version=...`에서 등록된 특정 버전을 확인할 수 있으므로, 문서를 바꿀 때는 기존 버전을 보관하고 새 버전을 추가합니다. 팀이 확정한 원문을 등록하기 전에는 목록이 비어 있습니다.
+
+FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `answer`, `order`를 등록하고 백엔드를 배포하면 반영됩니다. 조회 결과는 `order` 오름차순이고, 등록된 항목이 없으면 빈 목록을 반환합니다.
 
 
 ### 카카오 인증 코드 교환
@@ -136,9 +143,15 @@ com.boongboongus.backend
 
 ## GitHub 협업
 
+팀 작업 기준은 [CONTRIBUTING.md](CONTRIBUTING.md), AI 공통 지침은 [AGENTS.md](AGENTS.md)를 참고합니다.
+
 - `main`·`develop` 대상 push/PR: GitHub Actions가 Java21·PostgreSQL18로 `clean build` 실행
-- 브랜치 예시: `feat/drive-start`, `fix/card-expiration`, `chore/initial-setup`
-- 커밋 예시: `feat: 주행 시작 API 구현`, `chore: 백엔드 초기 설정`
-- PR·기능 요청·버그 템플릿 포함
+- 작업 흐름: 이슈 생성 → 번호가 포함된 작업 브랜치 → PR → 리뷰·CI → 머지 → 이슈 완료 확인
+- 브랜치 예시: `feat/12-drive-start`, `fix/34-card-expiration`
+- 커밋 예시: `feat: 주행 시작 API 구현` (이슈 번호는 선택)
+- PR 제목 예시: `feat: 주행 시작 API 구현 (#12)`
+- PR 본문에 `Refs #12`로 이슈 참조. 일반 PR은 `develop` 대상이며 완료 조건 확인 후 이슈 종료
+- 기능 개발·버그 수정·일반 작업 이슈는 기본 내용이 채워진 단일 Markdown 편집창으로 작성
+- PR도 기본 본문 템플릿을 사용하며 전체 내용을 한 번에 수정·붙여넣기 가능
 
 브랜치 보호는 저장소 관리자가 GitHub Settings → Rules → Rulesets에서 별도로 설정합니다. PR 승인1명과 `Build and test` 체크 필수를 권장합니다. 이 저장소 파일만으로 GitHub의 보호 규칙이나 Secrets가 설정되지는 않습니다.
