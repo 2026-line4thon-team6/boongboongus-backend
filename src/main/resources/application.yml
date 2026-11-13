@@ -2,7 +2,9 @@ spring:
   application:
     name: boongboongus-backend
   config:
-    import: optional:file:.env[.properties]
+    import:
+      - optional:file:.env[.properties]
+      - classpath:legal-documents.yml
   profiles:
     default: local
   jpa:
@@ -35,6 +37,12 @@ management:
       show-details: never
 
 app:
+  auth:
+    token-key: ${AUTH_TOKEN_KEY:}
+    kakao:
+      client-secret: ${KAKAO_LOGIN_CLIENT_SECRET:}
+      rest-api-key: ${KAKAO_LOGIN_REST_API_KEY:}
+      redirect-uris: ${KAKAO_LOGIN_REDIRECT_URIS:}
   maps:
     kakao:
       local-base-url: https://dapi.kakao.com

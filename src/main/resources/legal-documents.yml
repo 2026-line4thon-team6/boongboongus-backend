@@ -1,0 +1,4 @@
+app:
+  legal:
+    # Add only approved documents. Keep old versions for version-specific lookup.
+    documents: []
