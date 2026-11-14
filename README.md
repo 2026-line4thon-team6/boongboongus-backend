@@ -163,6 +163,12 @@ PostgreSQL 데이터는 Docker의 `postgres-data` 볼륨에 보존됩니다. Pos
 
 운영 환경은 `SPRING_PROFILES_ACTIVE=prod`, `DB_HOST`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `CORS_ALLOWED_ORIGINS`를 설정합니다. `DB_PORT` 기본값은5432, `SERVER_PORT`는8080입니다. DB 세션·JDBC 시간대는 UTC입니다. 프론트 허용 Origin은 쉼표로 구분합니다. 인증·접근 제어는 아직 구현 전이므로 서비스 공개 전에 추가합니다.
 
+### 드라이브 카드 사진 저장소
+
+단일 EC2의 EBS에 사진 전용 디렉터리를 미리 만들고, 앱 실행 계정에 쓰기 권한을 부여합니다. Docker를 쓰는 경우 해당 디렉터리를 컨테이너에 바인드 마운트하고 `MEDIA_STORAGE_ROOT`에 컨테이너 내부 경로를 지정합니다. PostgreSQL의 `card_photo_uploads.storage_path`에는 이 디렉터리 기준 상대 경로를 저장합니다. EBS가 연결된 상태에서 앱을 시작합니다.
+
+`MEDIA_PUBLIC_BASE_URL`에는 프런트가 접근할 수 있는 API 기본 주소를, `MEDIA_SIGNING_KEY`에는 무작위 서명 키를 설정합니다. 발급 URL의 쿼리 문자열은 로그에 기록하지 않습니다.
+
 ## 빌드와 테스트
 
 ```powershell
