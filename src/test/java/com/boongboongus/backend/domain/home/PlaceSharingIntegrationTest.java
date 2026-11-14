@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.boongboongus.backend.domain.drive.CurrentCoupleLookup;
+import com.boongboongus.backend.domain.home.PlaceCatalog.Category;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
@@ -16,6 +17,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -40,6 +43,33 @@ class PlaceSharingIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired AtomicInteger deliveries;
+    @Autowired HardcodedPlaceCatalog catalog;
+
+    @ParameterizedTest
+    @EnumSource(Category.class)
+    void recommendedPlacesCanBeOpenedFavoritedAndShared(Category category) throws Exception {
+        String user = UUID.randomUUID().toString();
+        mvc.perform(get(API + "/places/recommendations").param("category", category.name()).principal(() -> user))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(3));
+
+        var places = catalog.findRecommendationsByCategory(category);
+        for (var place : places) {
+            mvc.perform(get(API + "/places/" + place.id()).principal(() -> user))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.place.address").isNotEmpty())
+                    .andExpect(jsonPath("$.data.place.coordinate.latitude").isNumber())
+                    .andExpect(jsonPath("$.data.place.coordinate.longitude").isNumber())
+                    .andExpect(jsonPath("$.data.photos[0]").isNotEmpty());
+            mvc.perform(put(FAVORITES + "/" + place.id()).principal(() -> user)).andExpect(status().isOk());
+            mvc.perform(get(API + "/places/" + place.id() + "/share").principal(() -> user))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.url").value("https://share.example.test/places/" + place.id()));
+            mvc.perform(get(API + "/public/places/" + place.id()))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(place.id()));
+        }
+        mvc.perform(get(FAVORITES).param("category", category.name()).principal(() -> user))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(3));
+    }
 
     @Test
     void favoritesArePrivateIdempotentAndReflectedInDetail() throws Exception {

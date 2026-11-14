@@ -1885,11 +1885,11 @@ paths:
       operationId: getRecommendations
       tags:
       - 홈·장소
-      summary: 카테고리 추천 장소 7개
+      summary: 카테고리 추천 장소
       description: '**상태:** 설계 초안 · **접근:** 로그인 필수
 
 
-        최대 7개. 새로고침은 이전 refreshToken을 보내 다른 묶음 요청. 후보 부족 시 7개 미만 정상. 랜덤 추천을 실제 개인 취향 학습으로 표시하지 않는다.
+        MVP는 카테고리별로 등록된 3곳을 반환한다. 응답의 id는 상세·찜·공유에 사용한다. 최대 7곳까지 반환할 수 있으며, 등록 후보가 7곳을 초과할 때는 이전 refreshToken을 보내 다음 묶음을 요청할 수 있다.
 
 
         **근거:** OFF p3; ON p3 · [Figma 97:2383](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=97-2383)
@@ -1932,18 +1932,19 @@ paths:
                 data:
                   category: SEA
                   items:
-                  - id: plc_01
-                    name: 반포 한강공원
-                    region: 서울 서초구
-                    address: 서울 서초구 신반포로
+                  - id: plc_oido
+                    name: 시흥 오이도
+                    region: 경기 시흥시
+                    address: 경기도 시흥시 오이도로 170
                     coordinate:
-                      latitude: 37.5665
-                      longitude: 126.978
-                    thumbnailUrl: https://assets.example.invalid/image.jpg
+                      latitude: 37.3454554
+                      longitude: 126.6875106
+                    thumbnailUrl: https://2026-line4thon-team6-fe.vercel.app/mocks/spots/oido.webp
                     category: SEA
                     hashtags:
-                    - 야경
-                    estimatedDurationSeconds: 1800
+                    - 일몰
+                    - 해안도로
+                    estimatedDurationSeconds: null
                     distanceMeters: 3200
                     isFavorite: false
                   refreshToken: random_seed_01

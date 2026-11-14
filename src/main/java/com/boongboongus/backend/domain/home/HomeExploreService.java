@@ -73,7 +73,7 @@ class HomeExploreService {
         PlaceCatalog source = requiredSource(catalog, "장소 추천 정보를 확인할 수 없습니다.");
         String prefix = "recommendations/" + category.name() + "/";
         String previous = decodeToken(refreshToken, prefix);
-        List<Place> candidates = unique(source.findByCategory(category).stream()
+        List<Place> candidates = unique(source.findRecommendationsByCategory(category).stream()
                 .filter(place -> category == place.category())
                 .sorted(Comparator.comparing(Place::id)).toList());
         int size = candidates.size();

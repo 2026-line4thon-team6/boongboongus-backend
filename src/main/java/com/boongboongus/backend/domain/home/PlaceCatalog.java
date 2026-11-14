@@ -8,6 +8,10 @@ import java.util.Optional;
 public interface PlaceCatalog {
     List<Place> findByCategory(Category category);
 
+    default List<Place> findRecommendationsByCategory(Category category) {
+        return findByCategory(category);
+    }
+
     List<Place> findPopularDestinations();
 
     Optional<Place> findById(String placeId);
