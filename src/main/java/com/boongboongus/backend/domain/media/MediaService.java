@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -251,10 +252,35 @@ public class MediaService {
     }
 
     public List<DownloadUrl> cardPhotos(String cardId, String userId) {
-        Instant expiry = Instant.now().truncatedTo(ChronoUnit.SECONDS).plus(LINK_LIFETIME);
+        Instant expiry = attachedLinkExpiry();
         return jdbc.sql("SELECT id FROM card_photo_uploads WHERE card_id = :card ORDER BY card_position")
                 .param("card", cardId).query(String.class).list().stream()
-                .map(id -> new DownloadUrl(id, links.issue("GET", id, userId, expiry), expiry)).toList();
+                .map(id -> attachedLink(id, userId, expiry)).toList();
+    }
+
+    public Map<String, String> cardThumbnails(List<String> cardIds, String userId) {
+        if (cardIds.isEmpty()) {
+            return Map.of();
+        }
+        Instant expiry = attachedLinkExpiry();
+        Map<String, String> urls = new HashMap<>();
+        jdbc.sql("""
+                SELECT m.card_id, m.id FROM card_photo_uploads m
+                JOIN drive_cards c ON c.id = m.card_id JOIN drives d ON d.id = c.drive_id
+                WHERE m.card_id IN (:cards) AND m.card_position = 0 AND m.status = 'ATTACHED'
+                    AND c.status = 'COMPLETED' AND :user IN (d.driver_user_id, d.passenger_user_id)
+                """).param("cards", cardIds).param("user", userId)
+                .query((row, index) -> urls.put(row.getString("card_id"),
+                        attachedLink(row.getString("id"), userId, expiry).url())).list();
+        return urls;
+    }
+
+    private static Instant attachedLinkExpiry() {
+        return Instant.now().truncatedTo(ChronoUnit.SECONDS).plus(LINK_LIFETIME);
+    }
+
+    private DownloadUrl attachedLink(String id, String userId, Instant expiry) {
+        return new DownloadUrl(id, links.issue("GET", id, userId, expiry), expiry);
     }
 
     public boolean hasCardPhotos(String cardId) {

@@ -6225,7 +6225,6 @@ paths:
       - D14
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
@@ -6246,7 +6245,8 @@ paths:
 
 
         동일 목적지 최신 카드와 recordCount를 제공, UI의 +N은 recordCount-1. 페이지 모든 마커를 읽어야 전체 지도 완성. viewport bbox는 좌표 순서 검증.
-        GPS 경로 원문은 마커 응답에 포함하지 않음.
+        검색·날짜·bbox 적용 후 목적지 그룹의 카드 수를 recordCount로 계산한다. 좌표가 있는 카드만 대상으로 하며 totalCount는 필터를 통과한 전체 카드 수다.
+        GPS 경로 원문은 마커 응답에 포함하지 않는다.
 
 
         **근거:** OFF p7-11 · [Figma 284:15593](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=284-15593),
@@ -6321,7 +6321,6 @@ paths:
       - D15
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
@@ -6392,7 +6391,6 @@ paths:
       x-policy-issues: []
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
@@ -6413,7 +6411,7 @@ paths:
 
 
         COMPLETED만. access=COUPLE_ONLY, 링크 자체로 접근 권한을 부여하지 않는다. 로그인+현재 연결된 동일 커플 검증. 인스타 스토리 이미지 생성·외부 앱 전달은 FE에서
-        명시 공유 동작으로 처리, API 공개 카드 엔드포인트 없음.
+        명시 공유 동작으로 처리한다. CARD_SHARE_BASE_URL 아래 /cards/{cardId}로 고정 링크를 발급하며 expiresAt은 null이다.
 
 
         **근거:** OFF p7-11 · [Figma 284:15593](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=284-15593),
@@ -6435,7 +6433,7 @@ paths:
                 data:
                   url: https://app.example.invalid/cards/crd_01
                   access: COUPLE_ONLY
-                  expiresAt: '2026-11-02T07:00:00Z'
+                  expiresAt: null
                 meta:
                   requestId: req_01
                   serverTime: '2026-11-02T07:00:00Z'
@@ -6459,7 +6457,6 @@ paths:
       - D04
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
