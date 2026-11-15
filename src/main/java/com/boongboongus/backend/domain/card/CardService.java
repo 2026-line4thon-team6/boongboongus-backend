@@ -223,7 +223,7 @@ class CardService {
         return user.equals(card.driver()) ? card.passenger() : card.driver();
     }
 
-    private Actor actor(Principal principal, String requestedCouple) {
+    Actor actor(Principal principal, String requestedCouple) {
         if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
             throw new CardError(HttpStatus.UNAUTHORIZED, "AUTHENTICATION_REQUIRED", "로그인이 필요합니다.");
         }
@@ -271,7 +271,7 @@ class CardService {
         return new CardError(HttpStatus.UNPROCESSABLE_CONTENT, code, message);
     }
 
-    private record Actor(String user, String couple) {
+    record Actor(String user, String couple) {
     }
 
     static final class CardError extends RuntimeException {

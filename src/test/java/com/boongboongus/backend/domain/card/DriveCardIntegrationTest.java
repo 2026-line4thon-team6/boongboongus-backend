@@ -9,6 +9,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
+import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -35,7 +37,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-@SpringBootTest(properties = "app.auth.token-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+@SpringBootTest(properties = {"app.auth.token-key=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "CARD_SHARE_BASE_URL=https://app.example.invalid"})
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 class DriveCardIntegrationTest {
@@ -175,6 +178,128 @@ class DriveCardIntegrationTest {
         assertThat(photoState(photo)).isEqualTo("DELETED");
         assertThat(jdbc.sql("SELECT COUNT(*) FROM card_reflections WHERE card_id = :id")
                 .param("id", card).query(Integer.class).single()).isZero();
+    }
+
+
+    @Test
+    void listsAndCountsOnlyCompletedCardsBySeoulStartDateWithStableCursor() throws Exception {
+        record("crd_a", "COMPLETED", "바다", "2026-10-31T15:00:00Z", null, null, 0, 0);
+        record("crd_z", "COMPLETED", "산", "2026-10-31T15:01:00Z", "place_01", "바다 전망대", 37, 127);
+        record("crd_old", "COMPLETED", "바다", "2026-10-31T14:59:59Z", null, null, 0, 0);
+        record("crd_draft", "DRAFT", "바다", "2026-10-31T15:00:00Z", null, null, 0, 0);
+
+        var first = data(mvc.perform(auth(get(API + "/records"), driver)
+                .param("q", "바다").param("fromDate", "2026-11-01").param("toDate", "2026-11-01").param("limit", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalCount").value(3))
+                .andExpect(jsonPath("$.data.filteredCount").value(2))
+                .andExpect(jsonPath("$.data.items[0].cardId").value(recordId("crd_z")))
+                .andExpect(jsonPath("$.data.items[0].driveDate").value("2026-11-01")).andReturn());
+        String cursor = first.path("nextCursor").asText();
+        mvc.perform(auth(get(API + "/records"), driver)
+                .param("q", "바다").param("fromDate", "2026-11-01").param("toDate", "2026-11-01")
+                .param("limit", "1").param("cursor", cursor))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].cardId").value(recordId("crd_a")))
+                .andExpect(jsonPath("$.data.hasMore").value(false));
+        mvc.perform(auth(get(API + "/records"), driver).param("cursor", cursor).param("q", "산"))
+                .andExpect(status().isBadRequest());
+        mvc.perform(auth(get(API + "/records"), driver).param("date", "2026-11-01").param("fromDate", "2026-11-01"))
+                .andExpect(status().is(422));
+        mvc.perform(auth(get(API + "/records/calendar"), passenger).param("month", "2026-11"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.days.length()").value(1))
+                .andExpect(jsonPath("$.data.days[0].date").value("2026-11-01"))
+                .andExpect(jsonPath("$.data.days[0].count").value(2));
+    }
+
+    @Test
+    void groupsMapAfterFilteringAndUsesFirstAttachedPhotoForLatestCard() throws Exception {
+        record("crd_a", "COMPLETED", "같은 장소", "2026-11-01T00:00:00Z", "m_place", "한강", 37, 127);
+        record("crd_b", "COMPLETED", "같은 장소", "2026-11-02T00:00:00Z", "m_place", "한강", 37, 127);
+        record("crd_out", "COMPLETED", "같은 장소", "2026-11-03T00:00:00Z", "m_place", "한강", 38, 128);
+        record("crd_c", "COMPLETED", "좌표", "2026-11-01T00:00:00Z", null, "근처", 37.001001, 127);
+        record("crd_d", "COMPLETED", "좌표", "2026-11-01T00:00:01Z", null, "근처", 37.001002, 127);
+        record("crd_no_position", "COMPLETED", "좌표 없음", "2026-11-03T00:00:00Z", null, null, 0, 0);
+        String first = readyPhoto();
+        String second = readyPhoto();
+        jdbc.sql("""
+                UPDATE card_photo_uploads SET status='ATTACHED', card_id=:card, card_position =
+                    CASE WHEN id = :first THEN 0 ELSE 1 END WHERE id IN (:ids)
+                """).param("card", recordId("crd_b")).param("first", first).param("ids", java.util.List.of(first, second)).update();
+
+        String bbox = "126.5,36.5,127.5,37.5";
+        var page = data(mvc.perform(auth(get(API + "/records/map"), passenger).param("bbox", bbox).param("limit", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalCount").value(4))
+                .andExpect(jsonPath("$.data.markers[0].groupKey").value("place:m_place"))
+                .andExpect(jsonPath("$.data.markers[0].recordCount").value(2))
+                .andExpect(jsonPath("$.data.markers[0].latestCard.cardId").value(recordId("crd_b"))).andReturn());
+        assertThat(page.path("markers").get(0).path("latestCard").path("thumbnailUrl").asText())
+                .contains("/media/" + first + "/content");
+        mvc.perform(auth(get(API + "/records/map"), passenger).param("bbox", bbox).param("limit", "1")
+                .param("cursor", page.path("nextCursor").asText()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.markers[0].recordCount").value(2))
+                .andExpect(jsonPath("$.data.markers[0].latestCard.cardId").value(recordId("crd_d")))
+                .andExpect(jsonPath("$.data.markers[0].latestCard.thumbnailUrl").value((Object) null))
+                .andExpect(jsonPath("$.data.hasMore").value(false));
+        mvc.perform(auth(get(API + "/records/map"), passenger).param("bbox", "128,38,127,37"))
+                .andExpect(status().is(422));
+    }
+
+    @Test
+    void onlyCurrentCoupleCanIssueAndOpenCompletedCardLinks() throws Exception {
+        record("crd_shared", "COMPLETED", "공유 기록", "2026-11-01T00:00:00Z", null, null, 0, 0);
+        record("crd_unshared", "DRAFT", "공유 불가", "2026-11-01T00:00:00Z", null, null, 0, 0);
+        String path = cardPath(recordId("crd_shared"));
+        mvc.perform(auth(get(path + "/share"), passenger)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.url").value("https://app.example.invalid/cards/" + recordId("crd_shared")))
+                .andExpect(jsonPath("$.data.access").value("COUPLE_ONLY"))
+                .andExpect(jsonPath("$.data.expiresAt").value((Object) null));
+        mvc.perform(auth(get(path), passenger)).andExpect(status().isOk());
+        String outsider = "outsider_" + UUID.randomUUID();
+        String otherPartner = "partner_" + UUID.randomUUID();
+        long kakaoId = UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE;
+        addMember(outsider, "다른 사용자", kakaoId);
+        addMember(otherPartner, "다른 상대", kakaoId - 1);
+        jdbc.sql("""
+                INSERT INTO couples (id, first_member_id, second_member_id, start_date, mascot_name)
+                VALUES (:id, :first, :second, :start, '붕붕이')
+                """).param("id", "other_" + couple).param("first", outsider).param("second", otherPartner)
+                .param("start", LocalDate.of(2026, 1, 1)).update();
+        mvc.perform(auth(get(path + "/share"), outsider)).andExpect(status().isNotFound());
+        mvc.perform(auth(get(path), outsider)).andExpect(status().isNotFound());
+        mvc.perform(auth(get(API + "/records"), outsider)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalCount").value(0));
+        mvc.perform(get(path + "/share")).andExpect(status().isUnauthorized());
+        mvc.perform(auth(get(cardPath(recordId("crd_unshared")) + "/share"), passenger)).andExpect(status().isNotFound());
+        jdbc.sql("UPDATE couples SET disconnected_at = :now WHERE id = :id")
+                .param("now", OffsetDateTime.now()).param("id", couple).update();
+        mvc.perform(auth(get(path + "/share"), passenger)).andExpect(status().isForbidden());
+        mvc.perform(auth(get(path), passenger)).andExpect(status().isForbidden());
+        mvc.perform(auth(get(API + "/records/calendar"), passenger).param("month", "2026-11"))
+                .andExpect(status().isForbidden());
+    }
+
+    private void record(String card, String status, String testTitle, String started, String placeId, String name,
+            double latitude, double longitude) {
+        String cardId = recordId(card);
+        String driveId = "drv_" + cardId;
+        OffsetDateTime at = OffsetDateTime.parse(started);
+        String place = name == null ? null : json.writeValueAsString(new Place(placeId, name, "서울", new Coordinate(latitude, longitude)));
+        jdbc.sql("""
+                INSERT INTO drives (id, couple_id, title, status, driver_user_id, passenger_user_id,
+                    recorder_user_id, control_version, started_at, ended_at, route_id, origin_snapshot, destination_snapshot)
+                VALUES (:id, :couple, '주행', 'ENDED', :driver, :passenger, :driver, 3, :start, :end, :route, :place, :place)
+                """).param("id", driveId).param("couple", couple).param("driver", driver).param("passenger", passenger)
+                .param("start", at).param("end", at.plusHours(1)).param("route", place == null ? null : "test_route")
+                .param("place", place).update();
+        jdbc.sql("""
+                INSERT INTO drive_cards (id, drive_id, title, status, editable_until, completed_at)
+                VALUES (:id, :drive, :title, :status, :expires, :complete)
+                """).param("id", cardId).param("drive", driveId).param("title", testTitle)
+                .param("status", status).param("expires", at.plusHours(25))
+                .param("complete", status.equals("COMPLETED") ? at.plusHours(1) : null).update();
+    }
+
+    private String recordId(String suffix) {
+        return "r_" + couple.substring("couple_".length()) + "_" + suffix;
     }
 
     private String endDrive() throws Exception {
