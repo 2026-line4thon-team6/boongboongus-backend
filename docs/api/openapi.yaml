@@ -5147,7 +5147,7 @@ paths:
 
 
         앨범에서 선택한 CARD_PHOTO만 허용한다. 파일당10MiB, JPEG/PNG/WebP. 업로드 URL10분, 미첨부 객체24시간 만료, 서버 정리 작업1시간 간격. 최대2장 첨부 제한과
-        임시 업로드의 속도/용량 제한을 구분한다. 스토리지에는 requiredHeaders만 전달하고 서비스 Authorization을 붙이지 않는다.
+        임시 업로드의 속도/용량 제한을 구분한다. 발급된 uploadUrl에는 원본 파일 바이트와 requiredHeaders를 보내며 서비스 Authorization을 붙이지 않는다. 사용자당 발급 20건/시간, 미첨부 예약 용량 200MiB. 발급 응답 재시도에는 같은 멱등키를 사용하고 URL이 만료되면 새 업로드를 요청한다.
 
 
         **근거:** ON p16-18 · [Figma 289:18871](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-18871),
@@ -5238,7 +5238,6 @@ paths:
               contentType: image/jpeg
               bytes: 102400
               purpose: CARD_PHOTO
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p16-18
         figmaNodeIds:
@@ -5255,7 +5254,7 @@ paths:
       description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수 · 화면 기능 구현을 위한 지원 API
 
 
-        객체 존재·실제 크기·파일 형식·해시·이미지 디코딩을 검증한 뒤 READY. EXIF 위치 등 불필요 메타데이터 제거. client URL을 카드에 직접 저장하지 않고 mediaId만 허용.
+        객체 존재·실제 크기·파일 형식·해시·이미지 디코딩을 검증한 뒤 READY. 픽셀을 다시 인코딩하여 EXIF 위치 등 메타데이터를 제거한다. WebP는 PNG로 제공한다. 최대 25메가픽셀이며 재인코딩 결과도 최대 10MiB다. 응답의 contentType과 bytes는 저장된 결과 기준이다. client URL을 카드에 직접 저장하지 않고 mediaId만 허용.
 
 
         **근거:** ON p16-18 · [Figma 289:18871](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-18871),
@@ -5341,7 +5340,6 @@ paths:
               $ref: '#/components/schemas/UploadCompleteRequest'
             example:
               sha256: '0000000000000000000000000000000000000000000000000000000000000000'
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p16-18
         figmaNodeIds:
@@ -5358,7 +5356,7 @@ paths:
       description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수 · 화면 기능 구현을 위한 지원 API
 
 
-        현재 접근 가능한 본인 임시 업로드 또는 커플 카드 첨부만 허용. URL은 짧은 만료의 bearer URL이므로 로그/공개 공유에 사용하지 않는다. 커플 해제 후 새 URL 발급 차단.
+        현재 접근 가능한 본인 임시 업로드 또는 커플 카드 첨부만 허용. URL은 최대 10분 만료의 bearer URL이며 로그/공개 공유에 사용하지 않는다. 커플 해제 후 새 URL 발급 차단.
 
 
         **근거:** ON p16-18 · [Figma 289:18871](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-18871),
@@ -5399,7 +5397,6 @@ paths:
       x-policy-issues: []
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p16-18
         figmaNodeIds:
@@ -5407,6 +5404,73 @@ paths:
         - 289:18930
         kind: SUPPORTING
       x-policy-status: USER_CONFIRMED
+  /media/{mediaId}/content:
+    parameters:
+    - $ref: '#/components/parameters/MediaIdPath'
+    - name: token
+      in: query
+      required: true
+      description: 서버가 발급 URL에 포함한 단기 서명. URL 전체를 그대로 사용한다.
+      schema:
+        type: string
+    put:
+      operationId: putMediaContent
+      tags:
+      - 사진 업로드
+      summary: 발급 URL에 원본 파일 바이트 전송
+      security: []
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+          image/png:
+            schema:
+              type: string
+              format: binary
+          image/webp:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '204':
+          description: 원본 전송 성공. 완료 검증 API를 이어서 호출한다.
+        '403':
+          $ref: '#/components/responses/Forbidden2'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: FILE_TOO_LARGE
+        '422':
+          description: MEDIA_VALIDATION_FAILED
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      operationId: getMediaContent
+      tags:
+      - 사진 업로드
+      summary: 발급 URL에서 검증된 이미지 조회
+      security: []
+      responses:
+        '200':
+          description: 검증 후 저장한 이미지 바이트
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '403':
+          $ref: '#/components/responses/Forbidden2'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /drives/{driveId}/card:
     get:
       operationId: getDriveCard
@@ -8717,7 +8781,7 @@ paths:
       tags:
       - 사진 업로드
       summary: 아직 첨부되지 않은 내 업로드 폐기
-      description: '**상태:** 설계 초안 · **접근:** 로그인 필수
+      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
 
 
         미첨부 업로드 취소·정리를 위한 지원 API. 카드에 첨부된 사진 제거는 기존 saveCardDraft의 photoIds 전체 교체로 처리한다.
@@ -8772,7 +8836,6 @@ paths:
       - D14
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-scope-classification: SUPPORTING
       x-source-evidence:
         pdf: []

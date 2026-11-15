@@ -72,6 +72,11 @@ class AccessTokenFilter extends OncePerRequestFilter {
                         && List.of("/api/v1/couples", "/api/v1/couples/restore").contains(path))
                 || ("/api/v1/couples/me/mascot-name".equals(path) && "PATCH".equals(request.getMethod()))
                 || ("/api/v1/couples/me".equals(path) && List.of("GET", "HEAD", "PATCH", "DELETE").contains(request.getMethod()))
+                || ("POST".equals(request.getMethod()) && ("/api/v1/media/uploads".equals(path)
+                        || path.matches("/api/v1/media/[^/]+/complete")))
+                || (List.of("GET", "HEAD").contains(request.getMethod())
+                        && path.matches("/api/v1/media/[^/]+/download-url"))
+                || ("DELETE".equals(request.getMethod()) && path.matches("/api/v1/media/[^/]+"))
                 || ("/api/v1/me/onboarding".equals(path) && "PUT".equals(request.getMethod()))
                 || ("POST".equals(request.getMethod())
                         && List.of("/api/v1/auth/reauth", "/api/v1/auth/reauth/authorizations").contains(path))) {
