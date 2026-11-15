@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,7 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
-class MediaService {
+public class MediaService {
     private static final Logger log = LoggerFactory.getLogger(MediaService.class);
     private static final Duration TEMPORARY_LIFETIME = Duration.ofHours(24);
     private static final Duration LINK_LIFETIME = Duration.ofMinutes(10);
@@ -216,6 +217,80 @@ class MediaService {
         }
     }
 
+    // Call inside the transaction holding the card row lock.
+    public boolean replaceCardPhotos(String cardId, String coupleId, String userId, List<String> ids, Instant now) {
+        var requested = ids.isEmpty() ? List.of("") : ids;
+        var locked = jdbc.sql("""
+                SELECT id, user_id, couple_id, status, expires_at, card_id FROM card_photo_uploads
+                WHERE card_id = :card OR id IN (:requested) ORDER BY id FOR UPDATE
+                """).param("card", cardId).param("requested", requested)
+                .query((r, index) -> new Attachment(r.getString("id"), r.getString("user_id"),
+                        r.getString("couple_id"), r.getString("status"), r.getString("card_id"),
+                        r.getObject("expires_at", OffsetDateTime.class).toInstant())).list();
+        var eligible = locked.stream().filter(photo -> photo.couple().equals(coupleId)
+                && (cardId.equals(photo.card()) || ("READY".equals(photo.status())
+                    && userId.equals(photo.owner()) && photo.expiry().isAfter(now))))
+                .map(Attachment::id).collect(java.util.stream.Collectors.toSet());
+        if (!eligible.containsAll(ids)) {
+            return false;
+        }
+        for (var photo : locked) {
+            if (cardId.equals(photo.card()) && !ids.contains(photo.id())) {
+                jdbc.sql("""
+                        UPDATE card_photo_uploads SET status = 'DELETED', card_id = NULL, card_position = NULL,
+                            cleanup_pending = TRUE WHERE id = :id
+                        """).param("id", photo.id()).update();
+            }
+        }
+        for (int position = 0; position < ids.size(); position++) {
+            jdbc.sql("""
+                    UPDATE card_photo_uploads SET status = 'ATTACHED', card_id = :card, card_position = :position
+                    WHERE id = :id
+                    """).param("card", cardId).param("position", position).param("id", ids.get(position)).update();
+        }
+        return true;
+    }
+
+    public List<DownloadUrl> cardPhotos(String cardId, String userId) {
+        Instant expiry = attachedLinkExpiry();
+        return jdbc.sql("SELECT id FROM card_photo_uploads WHERE card_id = :card ORDER BY card_position")
+                .param("card", cardId).query(String.class).list().stream()
+                .map(id -> attachedLink(id, userId, expiry)).toList();
+    }
+
+    public Map<String, String> cardThumbnails(List<String> cardIds, String userId) {
+        if (cardIds.isEmpty()) {
+            return Map.of();
+        }
+        Instant expiry = attachedLinkExpiry();
+        Map<String, String> urls = new HashMap<>();
+        jdbc.sql("""
+                SELECT m.card_id, m.id FROM card_photo_uploads m
+                JOIN drive_cards c ON c.id = m.card_id JOIN drives d ON d.id = c.drive_id
+                WHERE m.card_id IN (:cards) AND m.card_position = 0 AND m.status = 'ATTACHED'
+                    AND c.status = 'COMPLETED' AND :user IN (d.driver_user_id, d.passenger_user_id)
+                """).param("cards", cardIds).param("user", userId)
+                .query((row, index) -> urls.put(row.getString("card_id"),
+                        attachedLink(row.getString("id"), userId, expiry).url())).list();
+        return urls;
+    }
+
+    private static Instant attachedLinkExpiry() {
+        return Instant.now().truncatedTo(ChronoUnit.SECONDS).plus(LINK_LIFETIME);
+    }
+
+    private DownloadUrl attachedLink(String id, String userId, Instant expiry) {
+        return new DownloadUrl(id, links.issue("GET", id, userId, expiry), expiry);
+    }
+
+    public boolean hasCardPhotos(String cardId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM card_photo_uploads WHERE card_id = :card)")
+                .param("card", cardId).query(Boolean.class).single();
+    }
+
+    private record Attachment(String id, String owner, String couple, String status, String card, Instant expiry) {
+    }
+
     private void markDeleted(String id) {
         jdbc.sql("UPDATE card_photo_uploads SET status = 'DELETED', cleanup_pending = TRUE WHERE id = :id")
                 .param("id", id).update();
@@ -362,7 +437,7 @@ class MediaService {
     record Media(String id, State status, String contentType, int bytes, int width, int height) {
     }
 
-    record DownloadUrl(String mediaId, String url, Instant expiresAt) {
+    public record DownloadUrl(String mediaId, String url, Instant expiresAt) {
     }
 
     record Download(String contentType, byte[] bytes) {

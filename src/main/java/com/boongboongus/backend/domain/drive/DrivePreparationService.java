@@ -1,5 +1,7 @@
 package com.boongboongus.backend.domain.drive;
 
+import com.boongboongus.backend.domain.card.CardStore;
+
 import com.boongboongus.backend.domain.drive.CurrentCoupleLookup.Couple;
 import com.boongboongus.backend.domain.drive.DrivePreparationStore.DriveRow;
 import com.boongboongus.backend.domain.drive.DrivePreparationStore.RequestKey;
@@ -33,6 +35,7 @@ public class DrivePreparationService {
     private static final String DEFAULT_TITLE = "우리의 드라이브";
 
     private final DrivePreparationStore store;
+    private final CardStore cards;
     private final ObjectProvider<CurrentCoupleLookup> couples;
     private final ObjectProvider<DriveRouteLookup> routes;
     private final ObjectProvider<DriveLocationConsentLookup> locationConsents;
@@ -42,11 +45,13 @@ public class DrivePreparationService {
     private final StampService stamps;
     private final GameRepository games;
 
-    DrivePreparationService(DrivePreparationStore store, ObjectProvider<CurrentCoupleLookup> couples,
+    DrivePreparationService(DrivePreparationStore store, CardStore cards,
+            ObjectProvider<CurrentCoupleLookup> couples,
             ObjectProvider<DriveRouteLookup> routes, ObjectProvider<DriveLocationConsentLookup> locationConsents,
             TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas, StampService stamps,
             GameRepository games) {
         this.store = store;
+        this.cards = cards;
         this.couples = couples;
         this.routes = routes;
         this.locationConsents = locationConsents;
@@ -169,11 +174,19 @@ public class DrivePreparationService {
                 throw stateConflict();
             }
             Instant now = controlTime(drive);
-            if (drive.endedAt() != null && now.isAfter(drive.endedAt().plus(LATE_GPS_WINDOW))) {
+            if (drive.gpsPurgedAt() != null
+                    || (drive.endedAt() != null && now.isAfter(drive.endedAt().plus(LATE_GPS_WINDOW)))) {
                 throw error(HttpStatus.GONE, "GPS_UPLOAD_WINDOW_CLOSED", "GPS 업로드 가능 시간이 지났습니다.");
             }
             return recordGpsBatch(drive, request, now);
         });
+    }
+
+    // Called in the same transaction that deletes the card.
+    public void purgeCardGps(String coupleId, String driveId, Instant now) {
+        DriveRow drive = store.lockDrive(coupleId, driveId).orElseThrow(DrivePreparationService::driveNotFound);
+        stamps.resolvePending(drive, store.gpsHistory(drive.id()).values(), now, true);
+        store.purgeGps(driveId, now);
     }
 
     private DriveGps.Receipt recordGpsBatch(DriveRow drive, DriveGpsRequest.Batch request, Instant now) {
@@ -235,6 +248,7 @@ public class DrivePreparationService {
             Instant now = controlTime(drive);
             store.end(drive, request.reason(), now);
             games.abandonForDrive(drive.id());
+            cards.createForDrive(drive.id(), drive.title(), now);
             return findDrive(coupleId, driveId).view(now);
         });
     }

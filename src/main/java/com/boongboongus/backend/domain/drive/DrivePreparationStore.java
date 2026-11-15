@@ -19,6 +19,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 @Repository
 class DrivePreparationStore {
+    private static final String DRIVE_SELECT = """
+            SELECT drives.*, (SELECT id FROM drive_cards WHERE drive_id = drives.id) AS card_id
+            FROM drives
+            """;
     private final JdbcClient jdbc;
     private final JsonMapper json;
 
@@ -51,7 +55,7 @@ class DrivePreparationStore {
     }
 
     Optional<DriveRow> findActive(String coupleId) {
-        return jdbc.sql("SELECT * FROM drives WHERE couple_id = :coupleId AND active_slot = 1")
+        return jdbc.sql(DRIVE_SELECT + " WHERE couple_id = :coupleId AND active_slot = 1")
                 .param("coupleId", coupleId)
                 .query(this::readDrive)
                 .optional();
@@ -66,7 +70,7 @@ class DrivePreparationStore {
     }
 
     private Optional<DriveRow> findDrive(String coupleId, String driveId, boolean forUpdate) {
-        String sql = "SELECT * FROM drives WHERE couple_id = :coupleId AND id = :id";
+        String sql = DRIVE_SELECT + " WHERE couple_id = :coupleId AND id = :id";
         return jdbc.sql(forUpdate ? sql + " FOR UPDATE" : sql)
                 .param("coupleId", coupleId)
                 .param("id", driveId)
@@ -182,6 +186,12 @@ class DrivePreparationStore {
                 .query((row, index) -> new Coordinate(row.getDouble("latitude"), row.getDouble("longitude"))).optional();
     }
 
+    void purgeGps(String driveId, Instant now) {
+        jdbc.sql("DELETE FROM drive_gps_samples WHERE drive_id = :id").param("id", driveId).update();
+        jdbc.sql("UPDATE drives SET gps_purged_at = :now WHERE id = :id")
+                .param("now", now.atOffset(ZoneOffset.UTC)).param("id", driveId).update();
+    }
+
     NavigableMap<Integer, DriveGps.Sample> gpsHistory(String driveId) {
         var samples = new TreeMap<Integer, DriveGps.Sample>();
         jdbc.sql("SELECT sequence, recorded_at, latitude, longitude FROM drive_gps_samples WHERE drive_id = :id")
@@ -278,7 +288,7 @@ class DrivePreparationStore {
                 instant(rs, "started_at"), instant(rs, "state_changed_at"),
                 rs.getLong("active_millis"), rs.getLong("paused_millis"), instant(rs, "ended_at"),
                 rs.getString("end_reason"), rs.getDouble("distance_meters"), instant(rs, "last_gps_at"),
-                rs.getString("gps_quality"));
+                rs.getString("gps_quality"), rs.getString("card_id"), instant(rs, "gps_purged_at"));
     }
 
     private String snapshot(Object value) {
@@ -297,13 +307,14 @@ class DrivePreparationStore {
     record DriveRow(String id, String coupleId, String title, String status, String driverUserId,
             String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
             int controlVersion, Instant startedAt, Instant stateChangedAt, long activeMillis, long pausedMillis,
-            Instant endedAt, String endReason, double distanceMeters, Instant lastGpsAt, String gpsQuality) {
+            Instant endedAt, String endReason, double distanceMeters, Instant lastGpsAt, String gpsQuality, String cardId,
+            Instant gpsPurgedAt) {
 
         DriveRow(String id, String coupleId, String title, String status, String driverUserId,
                 String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
                 int controlVersion) {
             this(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId, routeId, origin,
-                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING");
+                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING", null, null);
         }
 
         DriveView view() {
@@ -312,12 +323,12 @@ class DrivePreparationStore {
 
         DriveView view(Instant now) {
             Instant pausedAt = "PAUSED".equals(status) ? stateChangedAt : null;
-            Instant editableUntil = endedAt == null ? null : endedAt.plus(Duration.ofHours(24));
+            Instant editableUntil = cardId == null ? null : endedAt.plus(Duration.ofHours(24));
             return new DriveView(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId,
                     origin, destination, routeId, startedAt, pausedAt, endedAt, endReason, controlVersion,
                     new DriveView.Metrics(distanceMeters, Math.toIntExact(activeMillisAt(now) / 1000),
                             Math.toIntExact(pausedMillisAt(now) / 1000), null, lastGpsAt, gpsQuality),
-                    editableUntil != null && now.isBefore(editableUntil), null, editableUntil, null);
+                    editableUntil != null && now.isBefore(editableUntil), cardId, editableUntil, null);
         }
 
         long activeMillisAt(Instant now) {

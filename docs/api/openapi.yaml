@@ -4273,7 +4273,7 @@ paths:
         recorderUserId만 최대200개/회 전송한다. 주행 내 sequence 중복은 재집계하지 않는다. 일부 거절도200이므로 accepted/duplicate/rejected를 확인한다.
         GPS 시퀀스가 중간에 누락되어도 FE는 누락된 좌표를 기다리지 않고 이후 좌표를 전송한다. 서버는 이후 유효한 좌표를 반영하며 highestContiguousSequence는 1번부터 연속으로 반영한 마지막 번호를 반환한다.
         정확도50m 초과는 ACCURACY_TOO_LOW. 기록 시각이 실제 ACTIVE 구간에 속해야 하며 PAUSED 구간은 집계하지 않는다. 종료 후900초 이내에만 종료 이전 좌표를 반영하고
-        이후는 LATE_UPLOAD_WINDOW_CLOSED. GPS 갱신은 controlVersion·카드 편집 마감/버전을 늘리지 않는다. 도착 검증은 반경100m·30초 체류이며 검증된 최신 GPS 기준으로 앞으로 남은 경로 거리가 2km 이내인 휴게소는 restAreaAlerts에 주행·휴게소당 한 번 제공한다.
+        이후 또는 카드 삭제로 GPS 좌표를 정리한 뒤에는 410 GPS_UPLOAD_WINDOW_CLOSED를 반환한다. GPS 갱신은 controlVersion·카드 편집 마감/버전을 늘리지 않는다. 도착 검증은 반경100m·30초 체류이며 검증된 최신 GPS 기준으로 앞으로 남은 경로 거리가 2km 이내인 휴게소는 restAreaAlerts에 주행·휴게소당 한 번 제공한다.
         FE는 알림 id로 중복 표시를 방지한다. GPS 저장은 길찾기 공급자의 장애와 독립적으로 처리한다.
 
 
@@ -5480,7 +5480,7 @@ paths:
       description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
 
 
-        GET으로 카드를 새로 만들지 않는다. 카드 ID는 end 처리에서 발급. 미작성·초안·완료 상태와 입력 가능 시각 반환. 카드 가능하지 않은 종료는404 CARD_UNAVAILABLE.
+        카드 ID는 end 처리에서 발급한다. 미작성·초안·완료 상태와 입력 가능 시각을 반환한다. 카드 생성 기능 배포 전 종료 등 작성 가능한 카드가 없으면 404 CARD_UNAVAILABLE.
 
 
         **근거:** ON p15-18; OFF p2,10 · [Figma 289:18871](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-18871),
@@ -5533,7 +5533,7 @@ paths:
                   editableUntil: '2026-11-03T07:00:00Z'
                   completedAt: null
                   canEdit: true
-                  canDelete: true
+                  canDelete: false
                   version: 1
                 meta:
                   requestId: req_01
@@ -5587,7 +5587,6 @@ paths:
       - D03
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p15-18; OFF p2,10
         figmaNodeIds:
@@ -5607,7 +5606,8 @@ paths:
 
 
         날짜·지역·거리·시간·스탬프·플레이리스트 스냅샷은 서버 생성. driverUserId와 소감 작성자의 role은 해당 주행에 저장된 운전자·동승자 정보에서 가져온다.
-        상대방 미제출 reflection 초안은 반환하지 않음. 마감 이후에도 COMPLETED는 조회 가능하며 canEdit=false.
+        카드 작성 화면의 두 닉네임은 GET /couples/me의 members를 driverUserId에 매핑한다. 상대방 미제출 reflection 초안은 반환하지 않는다.
+        이동 거리는 종료 후 15분 동안 수신할 수 있는 지연 GPS까지 반영한다. 마감 이후에도 COMPLETED는 조회 가능하며 canEdit=false.
 
 
         **근거:** ON p15-18; OFF p2,10 · [Figma 289:18871](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-18871),
@@ -5672,7 +5672,7 @@ paths:
                   editableUntil: '2026-11-03T07:00:00Z'
                   completedAt: null
                   canEdit: true
-                  canDelete: true
+                  canDelete: false
                   version: 1
                 meta:
                   requestId: req_01
@@ -5685,6 +5685,8 @@ paths:
           $ref: '#/components/responses/Forbidden2'
         '404':
           $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone2'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '429':
@@ -5698,7 +5700,6 @@ paths:
       - D04
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p15-18; OFF p2,10
         figmaNodeIds:
@@ -5716,10 +5717,11 @@ paths:
       description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
 
 
-        현재 두 멤버가 Card.version을 X-Expected-Version으로 전달하여 공동 카드를 삭제할 수 있다. 성공 즉시 양쪽 기록·지도·공유 링크에서 제외하고 완료 카드 수·기록
+        현재 두 멤버 중 한 명이 Card.version을 X-Expected-Version으로 전달하여 완료 카드를 삭제할 수 있다. 성공 즉시 양쪽 카드 상세·기록·지도·캘린더·공유 링크에서 제외하고 완료 카드 수·기록
         수·보존 완료 기록 기준 누적 거리를 함께 갱신한다. 삭제는 복구 불가. 다른 커플의 카드는 삭제하지 못한다. 미참조 사진은24시간 안 정리하고 다른 카드/사용자 참조 원본과 누적 스탬프는
         유지한다.
-        카드 삭제 시 해당 주행의 개별 GPS 좌표를 삭제한다.
+        첨부 사진의 기존 조회 URL은 삭제 확정 후 차단한다. 카드 삭제 시 접수된 대기 스탬프를 수신한 GPS로 마지막 검증하고 증거가 없으면 REJECTED로 처리한다.
+        그 뒤 해당 주행의 개별 GPS 좌표를 삭제하고 추가 GPS 수신을 닫는다. 이미 삭제된 카드는 404로 응답한다.
 
 
         **근거:** OFF p10-11 · [Figma 284:16663](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=284-16663)
@@ -5735,7 +5737,7 @@ paths:
         schema:
           type: integer
           example: 1
-          description: 문항 이동·완료·중단 시 증가하는 진행 제어 버전. 응답 PUT·힌트/정답 공개 자체는 증가시키지 않는다. 현재 questionId 불일치는409.
+          description: 카드의 현재 공통 버전.
           minimum: 1
         description: 카드 공통 version. 소감 전용 version과 구분.
       responses:
@@ -5779,7 +5781,6 @@ paths:
       - D08
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p10-11
         figmaNodeIds:
@@ -5798,7 +5799,7 @@ paths:
         편집 중 변경된 제목·사진은 프론트가 이 API로 자동 임시저장한다. 개인 소감은 saveMyReflection에 submitted=false로 자동 임시저장한다.
         자동 임시저장 시 상대방 인앱 알림과 푸시는 발생하지 않는다. 기록에 남기는 ‘저장하기’는 completeCard를 호출한다.
         now<editableUntil에서 title/photoIds 중 최소1개를 변경한다. photoIds는 최대2개의 전체 순서이고 첫 사진이 대표다. photoIds: []는 전부 제거한다.
-        READY 또는 동일 카드·현재 커플 ATTACHED만 허용한다. 완료 카드도 마지막 사진·제출 소감을 모두 제거할 수 없다. 첨부 사진 제거는 이 PATCH, 미첨부 본인 업로드 취소는
+        현재 커플에 속한 본인의 READY 사진 또는 동일 카드에 ATTACHED인 사진을 허용한다. 완료 카드도 마지막 사진·제출 소감을 모두 제거할 수 없다. 첨부 사진 제거는 이 PATCH, 미첨부 본인 업로드 취소는
         deleteTemporaryMedia를 사용한다. 사용자 공통 변경은 Card.version, 본인 소감은 Reflection.version으로 분리한다.
 
 
@@ -5853,7 +5854,7 @@ paths:
                   editableUntil: '2026-11-03T07:00:00Z'
                   completedAt: null
                   canEdit: true
-                  canDelete: true
+                  canDelete: false
                   version: 2
                 meta:
                   requestId: req_01
@@ -5907,7 +5908,6 @@ paths:
               photoIds:
               - med_01
               expectedVersion: 1
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p15-18; OFF p2,10
         figmaNodeIds:
@@ -6012,7 +6012,6 @@ paths:
               text: 함께해서 행복했어.
               submitted: true
               expectedVersion: 0
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p15-18; OFF p2,10
         figmaNodeIds:
@@ -6037,6 +6036,7 @@ paths:
         ‘저장하기’로 처음 COMPLETED가 되면 서버가 저장한 사람의 커플 상대를 수신자로 결정한다. 카드 완료와 CARD_COMPLETED 인앱 알림·푸시 발송 이벤트를 같은 트랜잭션에 기록한다.
         저장 확정 후 수신 등록된 상대 기기에 푸시를 발송한다. 푸시 실패나 수신 기기 미등록 시에도 카드와 인앱 알림은 유지한다.
         같은 카드의 완료 알림은 한 번만 생성하며, 재요청·동시 요청·완료 후 편집으로 다시 발송하지 않는다.
+        현재 서버는 인앱 알림과 푸시 발송 대기 이벤트를 저장한다. 등록 기기에 대한 푸시 발송은 발송기 연동 후 제공한다.
 
 
         **근거:** ON p15-18; OFF p2,10 · [Figma 289:18871](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-18871),
@@ -6143,7 +6143,6 @@ paths:
               $ref: '#/components/schemas/VersionRequest'
             example:
               expectedVersion: 1
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: ON p15-18; OFF p2,10
         figmaNodeIds:
@@ -6226,7 +6225,6 @@ paths:
       - D14
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
@@ -6247,7 +6245,8 @@ paths:
 
 
         동일 목적지 최신 카드와 recordCount를 제공, UI의 +N은 recordCount-1. 페이지 모든 마커를 읽어야 전체 지도 완성. viewport bbox는 좌표 순서 검증.
-        GPS 경로 원문은 마커 응답에 포함하지 않음.
+        검색·날짜·bbox 적용 후 목적지 그룹의 카드 수를 recordCount로 계산한다. 좌표가 있는 카드만 대상으로 하며 totalCount는 필터를 통과한 전체 카드 수다.
+        GPS 경로 원문은 마커 응답에 포함하지 않는다.
 
 
         **근거:** OFF p7-11 · [Figma 284:15593](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=284-15593),
@@ -6322,7 +6321,6 @@ paths:
       - D15
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
@@ -6393,7 +6391,6 @@ paths:
       x-policy-issues: []
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
@@ -6414,7 +6411,7 @@ paths:
 
 
         COMPLETED만. access=COUPLE_ONLY, 링크 자체로 접근 권한을 부여하지 않는다. 로그인+현재 연결된 동일 커플 검증. 인스타 스토리 이미지 생성·외부 앱 전달은 FE에서
-        명시 공유 동작으로 처리, API 공개 카드 엔드포인트 없음.
+        명시 공유 동작으로 처리한다. CARD_SHARE_BASE_URL 아래 /cards/{cardId}로 고정 링크를 발급하며 expiresAt은 null이다.
 
 
         **근거:** OFF p7-11 · [Figma 284:15593](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=284-15593),
@@ -6436,7 +6433,7 @@ paths:
                 data:
                   url: https://app.example.invalid/cards/crd_01
                   access: COUPLE_ONLY
-                  expiresAt: '2026-11-02T07:00:00Z'
+                  expiresAt: null
                 meta:
                   requestId: req_01
                   serverTime: '2026-11-02T07:00:00Z'
@@ -6460,7 +6457,6 @@ paths:
       - D04
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p7-11
         figmaNodeIds:
@@ -11791,7 +11787,7 @@ components:
         canDelete:
           type: boolean
           example: true
-          description: ''
+          description: 현재 연결된 주행 멤버가 완료 카드를 삭제할 수 있으면 true.
         version:
           type: integer
           example: 1
