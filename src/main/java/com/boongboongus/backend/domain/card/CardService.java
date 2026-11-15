@@ -6,6 +6,7 @@ import com.boongboongus.backend.domain.card.CardStore.CardRow;
 import com.boongboongus.backend.domain.card.CardStore.ReflectionRow;
 import com.boongboongus.backend.domain.couple.dto.CurrentCoupleResponse.Member;
 import com.boongboongus.backend.domain.drive.CurrentCoupleLookup;
+import com.boongboongus.backend.domain.drive.DrivePreparationService;
 import com.boongboongus.backend.domain.media.MediaService;
 import com.boongboongus.backend.domain.notification.service.NotificationService;
 import java.security.Principal;
@@ -29,17 +30,20 @@ class CardService {
     private final ObjectProvider<CurrentCoupleLookup> couples;
     private final AccountRepository accounts;
     private final MediaService media;
+    private final DrivePreparationService drives;
     private final NotificationService notifications;
     private final IdempotentWrite idempotency;
     private final TransactionTemplate transactions;
 
     CardService(CardStore cards, ObjectProvider<CurrentCoupleLookup> couples, AccountRepository accounts,
-            MediaService media, NotificationService notifications, IdempotentWrite idempotency,
+            MediaService media, DrivePreparationService drives, NotificationService notifications,
+            IdempotentWrite idempotency,
             TransactionTemplate transactions) {
         this.cards = cards;
         this.couples = couples;
         this.accounts = accounts;
         this.media = media;
+        this.drives = drives;
         this.notifications = notifications;
         this.idempotency = idempotency;
         this.transactions = transactions;
@@ -155,6 +159,21 @@ class CardService {
         }
     }
 
+    void delete(Principal principal, String coupleId, String id, int expectedVersion) {
+        Actor actor = actor(principal, coupleId);
+        transactions.executeWithoutResult(status -> {
+            CardRow card = lockForWrite(actor, id);
+            ensureVersion(card.version(), expectedVersion);
+            if (!card.completed()) {
+                throw invalid("VALIDATION_FAILED", "완료한 카드만 삭제할 수 있습니다.");
+            }
+            Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+            drives.purgeCardGps(actor.couple(), card.driveId(), now);
+            media.replaceCardPhotos(id, actor.couple(), null, List.of(), now);
+            cards.delete(id);
+        });
+    }
+
     @Scheduled(fixedDelay = 60_000, initialDelay = 60_000)
     void expireCards() {
         Instant now = Instant.now();
@@ -178,7 +197,7 @@ class CardService {
         return new CardView(card.id(), card.driveId(), card.driver(), card.coupleId(), card.status(), card.title(),
                 card.startedAt().atZone(SEOUL).toLocalDate(), region(card), card.destination(), card.distance(),
                 card.duration(), card.stamps(), card.playlist(), photos, reflections, card.editableUntil(),
-                card.completedAt(), now.isBefore(card.editableUntil()), true, card.version());
+                card.completedAt(), now.isBefore(card.editableUntil()), card.completed(), card.version());
     }
 
     private CardView.Reflection reflectionView(CardRow card, ReflectionRow reflection) {

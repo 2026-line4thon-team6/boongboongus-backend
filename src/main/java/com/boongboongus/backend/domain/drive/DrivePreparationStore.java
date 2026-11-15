@@ -186,6 +186,12 @@ class DrivePreparationStore {
                 .query((row, index) -> new Coordinate(row.getDouble("latitude"), row.getDouble("longitude"))).optional();
     }
 
+    void purgeGps(String driveId, Instant now) {
+        jdbc.sql("DELETE FROM drive_gps_samples WHERE drive_id = :id").param("id", driveId).update();
+        jdbc.sql("UPDATE drives SET gps_purged_at = :now WHERE id = :id")
+                .param("now", now.atOffset(ZoneOffset.UTC)).param("id", driveId).update();
+    }
+
     NavigableMap<Integer, DriveGps.Sample> gpsHistory(String driveId) {
         var samples = new TreeMap<Integer, DriveGps.Sample>();
         jdbc.sql("SELECT sequence, recorded_at, latitude, longitude FROM drive_gps_samples WHERE drive_id = :id")
@@ -282,7 +288,7 @@ class DrivePreparationStore {
                 instant(rs, "started_at"), instant(rs, "state_changed_at"),
                 rs.getLong("active_millis"), rs.getLong("paused_millis"), instant(rs, "ended_at"),
                 rs.getString("end_reason"), rs.getDouble("distance_meters"), instant(rs, "last_gps_at"),
-                rs.getString("gps_quality"), rs.getString("card_id"));
+                rs.getString("gps_quality"), rs.getString("card_id"), instant(rs, "gps_purged_at"));
     }
 
     private String snapshot(Object value) {
@@ -301,13 +307,14 @@ class DrivePreparationStore {
     record DriveRow(String id, String coupleId, String title, String status, String driverUserId,
             String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
             int controlVersion, Instant startedAt, Instant stateChangedAt, long activeMillis, long pausedMillis,
-            Instant endedAt, String endReason, double distanceMeters, Instant lastGpsAt, String gpsQuality, String cardId) {
+            Instant endedAt, String endReason, double distanceMeters, Instant lastGpsAt, String gpsQuality, String cardId,
+            Instant gpsPurgedAt) {
 
         DriveRow(String id, String coupleId, String title, String status, String driverUserId,
                 String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
                 int controlVersion) {
             this(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId, routeId, origin,
-                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING", null);
+                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING", null, null);
         }
 
         DriveView view() {

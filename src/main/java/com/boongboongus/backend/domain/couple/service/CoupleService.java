@@ -1,5 +1,6 @@
 package com.boongboongus.backend.domain.couple.service;
 
+import com.boongboongus.backend.domain.card.CardStore;
 import com.boongboongus.backend.domain.couple.dto.CurrentCoupleResponse;
 import com.boongboongus.backend.domain.couple.dto.CurrentCoupleResponse.Status;
 import com.boongboongus.backend.domain.couple.repository.CoupleRepository;
@@ -23,11 +24,12 @@ public class CoupleService implements CurrentCoupleLookup {
     private final CoupleRepository couples;
 
     private final NotificationService notifications;
+    private final CardStore cards;
 
-    CoupleService(CoupleRepository couples,
-            NotificationService notifications) {
+    CoupleService(CoupleRepository couples, NotificationService notifications, CardStore cards) {
         this.notifications = notifications;
         this.couples = couples;
+        this.cards = cards;
     }
 
     @Override
@@ -114,10 +116,10 @@ public class CoupleService implements CurrentCoupleLookup {
                 return new CurrentCoupleResponse(null, Status.DISCONNECTED);
             }
             long days = ChronoUnit.DAYS.between(connection.startDate(), LocalDate.now(BUSINESS_ZONE)) + 1;
-            // Card storage is introduced by the records feature.
+            var totals = cards.completedTotals(connection.id());
             return new CurrentCoupleResponse(new CurrentCoupleResponse.Couple(connection.id(), Status.CONNECTED,
-                    List.of(connection.first(), connection.second()), connection.startDate(), days, 0, 0,
-                    connection.version(), connection.mascotName()), Status.CONNECTED);
+                    List.of(connection.first(), connection.second()), connection.startDate(), days, totals.distanceMeters(),
+                    totals.count(), connection.version(), connection.mascotName()), Status.CONNECTED);
         }).orElseGet(() -> new CurrentCoupleResponse(null, Status.UNLINKED));
     }
 }

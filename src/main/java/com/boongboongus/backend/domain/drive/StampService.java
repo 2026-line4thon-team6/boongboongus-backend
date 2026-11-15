@@ -63,7 +63,8 @@ class StampService {
         var earned = findStamp(coupleId, areaId);
         boolean hasEvidence = earned.isEmpty() && visited(area, drives.gpsHistory(driveId).values());
         Instant until = deadline(drive);
-        if (earned.isEmpty() && !hasEvidence && until != null && now.isAfter(until)) {
+        if (earned.isEmpty() && !hasEvidence
+                && (drive.gpsPurgedAt() != null || (until != null && now.isAfter(until)))) {
             throw new DriveApiException(HttpStatus.UNPROCESSABLE_CONTENT, "STAMP_LOCATION_NOT_VERIFIED",
                     "방문 GPS를 확인할 수 있는 시간이 지났습니다.");
         }
@@ -98,6 +99,10 @@ class StampService {
     }
 
     void resolvePending(DriveRow drive, Collection<DriveGps.Sample> evidence, Instant now) {
+        resolvePending(drive, evidence, now, false);
+    }
+
+    void resolvePending(DriveRow drive, Collection<DriveGps.Sample> evidence, Instant now, boolean closeWindow) {
         var pending = jdbc.sql("""
                 SELECT * FROM rest_area_stamp_claims WHERE drive_id = :drive AND status = 'PENDING'
                 ORDER BY created_at, id
@@ -112,7 +117,7 @@ class StampService {
             Area area = catalog.find(claim.areaId()).orElseThrow(StampService::notFound);
             if (visited(area, evidence)) {
                 verify(claim, now);
-            } else if (until != null && now.isAfter(until)) {
+            } else if (closeWindow || (until != null && now.isAfter(until))) {
                 settle(claim, "REJECTED", null, false, now);
             }
         }

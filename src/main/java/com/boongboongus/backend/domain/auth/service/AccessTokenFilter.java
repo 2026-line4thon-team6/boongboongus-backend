@@ -81,6 +81,7 @@ class AccessTokenFilter extends OncePerRequestFilter {
                         && (path.matches("/api/v1/drives/[^/]+/card")
                             || path.matches("/api/v1/cards/[^/]+(/share)?")
                             || List.of("/api/v1/records", "/api/v1/records/map", "/api/v1/records/calendar").contains(path)))
+                || ("DELETE".equals(request.getMethod()) && path.matches("/api/v1/cards/[^/]+"))
                 || ("PATCH".equals(request.getMethod()) && path.matches("/api/v1/cards/[^/]+/draft"))
                 || ("PUT".equals(request.getMethod()) && path.matches("/api/v1/cards/[^/]+/reflections/me"))
                 || ("POST".equals(request.getMethod()) && path.matches("/api/v1/cards/[^/]+/complete"))

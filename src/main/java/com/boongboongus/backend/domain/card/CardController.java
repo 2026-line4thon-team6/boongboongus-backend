@@ -19,6 +19,7 @@ import java.security.Principal;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -77,6 +78,29 @@ class CardController {
         validateHeader(coupleId, 1, 80);
         validateHeader(key, 16, 128);
         return ApiResponse.success(cards.complete(principal, coupleId, cardId, key, request.expectedVersion()));
+    }
+
+    @DeleteMapping("/cards/{cardId}")
+    @Operation(operationId = "deleteCard")
+    ResponseEntity<Void> delete(Principal principal, @PathVariable String cardId,
+            @RequestHeader("X-Couple-Id") String coupleId,
+            @RequestHeader(value = "X-Expected-Version", required = false) String version) {
+        validateHeader(coupleId, 1, 80);
+        validateHeader(cardId, 1, 80);
+        if (version == null) {
+            throw new CardError(HttpStatus.PRECONDITION_REQUIRED, "PRECONDITION_REQUIRED", "카드 버전을 보내 주세요.");
+        }
+        int expected;
+        try {
+            expected = Integer.parseInt(version);
+        } catch (NumberFormatException exception) {
+            throw new CardError(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "카드 버전을 확인해 주세요.");
+        }
+        if (expected < 1) {
+            throw new CardError(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "카드 버전을 확인해 주세요.");
+        }
+        cards.delete(principal, coupleId, cardId, expected);
+        return ResponseEntity.noContent().build();
     }
 
     @ExceptionHandler(CardError.class)
