@@ -7716,11 +7716,14 @@ paths:
       tags:
       - 게임
       summary: 밸런스·넌센스·추억 게임 세트 생성
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         현재 PREPARING/ACTIVE/PAUSED 주행에 세트당5문항을 생성한다. 추억 질문은 현재 커플이 접근 가능한 완료 기록만 사용한다. 각자 본인 응답만 저장하며 넌센스 객관 점수·자기
         채점·성장 보상은 제공하지 않는다. 준비 중 게임이 가능해도 GPS 주행은 자동 시작하지 않는다.
+        밸런스·넌센스는 서버 문항 목록을 사용한다. 추억 게임은 현재 커플의 참여자에게 조회 가능한 종료(ENDED) 주행 제목으로 문항을 만든다.
+        해당 기록이 없으면 생성 작업이 FAILED로 끝나며 job.error.code는 MEMORY_RECORDS_REQUIRED다.
+        접수 뒤 주행이 종료되거나 커플 연결이 바뀌면 생성 작업은 DRIVE_STATE_CONFLICT로 실패한다.
 
 
         **근거:** ON p12-14 · [Figma 289:28487](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-28487),
@@ -7785,7 +7788,7 @@ paths:
             example:
               driveId: drv_01
               type: BALANCE
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:
@@ -7802,7 +7805,7 @@ paths:
       tags:
       - 게임
       summary: 게임 진행·현재 문항·응답 조회
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         현재 커플 참여자만. 넌센스 정답·초성은 reveal 전 null. 추억 게임은 정답 판정이나 객관 점수 없음.
@@ -7867,7 +7870,7 @@ paths:
       - D07
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:
@@ -7884,7 +7887,7 @@ paths:
       tags:
       - 게임
       summary: 넌센스 초성 힌트 열기
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         현재 넌센스 문항만. 이미 열린 힌트면 같은 결과. 다른 게임 유형이면422 GAME_ACTION_UNSUPPORTED. 현재 questionId가 아니면409 QUESTION_NOT_CURRENT.
@@ -7941,7 +7944,7 @@ paths:
       x-policy-issues: []
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:
@@ -7958,7 +7961,7 @@ paths:
       tags:
       - 게임
       summary: 넌센스 정답 열기
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         현재 넌센스 문항만. 서버가 answerRevealed=true로 기록. 노출 이전 정답은 API/모바일 번들에 미리 포함하지 않는다. 현재 questionId가 아니면409 QUESTION_NOT_CURRENT.
@@ -8015,7 +8018,7 @@ paths:
       x-policy-issues: []
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:
@@ -8032,7 +8035,7 @@ paths:
       tags:
       - 게임
       summary: 현재 문항 내 응답 저장
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         현재 문항에 각 사용자가 본인 기기의 인증으로 본인 응답만 저장한다. BALANCE 선택 또는 MEMORY 역할 선택만 받으며 type은 세션과 같아야 한다. 다른 작성자 ID·넌센스 자기
@@ -8122,7 +8125,7 @@ paths:
             example:
               type: BALANCE
               choice: A
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:
@@ -8139,7 +8142,7 @@ paths:
       tags:
       - 게임
       summary: 다음 게임 문항으로 진행
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         밸런스는 최소1명 응답, 넌센스는 정답 공개 후 진행한다. 추억은 응답 없이 PASS 가능. 마지막 문항은 next 대신 complete를 사용한다. 최신 진행 version 불일치는409이며
@@ -8230,7 +8233,7 @@ paths:
               $ref: '#/components/schemas/VersionRequest'
             example:
               expectedVersion: 1
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:
@@ -8247,7 +8250,7 @@ paths:
       tags:
       - 게임
       summary: 서버 검증 후 게임 세트 완료
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         5번째 마지막 문항에서 유형별 진행 조건(밸런스 최소1명 응답·넌센스 정답 공개·추억 PASS 가능)을 충족해야 COMPLETED로 전환한다. 중도 종료는 abandonGame을 사용한다.
@@ -8342,7 +8345,7 @@ paths:
               $ref: '#/components/schemas/VersionRequest'
             example:
               expectedVersion: 1
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:
@@ -8359,7 +8362,7 @@ paths:
       tags:
       - 게임
       summary: 게임 중단 확정
-      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+      description: '**상태:** 백엔드 구현 · **접근:** 현재 커플 연결 필수
 
 
         ACTIVE→ABANDONED. 그만하기에서만 호출한다. 확인 팝업의 계속하기는 API 호출 없이 현재 게임에 머문다.
@@ -8432,7 +8435,7 @@ paths:
               $ref: '#/components/schemas/VersionRequest'
             example:
               expectedVersion: 1
-      x-implementation-status: PLANNED
+      x-implementation-status: IMPLEMENTED
       x-source-evidence:
         pdf: ON p12-14
         figmaNodeIds:

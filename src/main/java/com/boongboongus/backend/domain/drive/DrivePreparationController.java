@@ -3,6 +3,7 @@ package com.boongboongus.backend.domain.drive;
 import com.boongboongus.backend.common.api.ApiResponse;
 import com.boongboongus.backend.common.api.ErrorResponse;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.security.Principal;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@SecurityRequirement(name = "bearerAuth")
 @RequestMapping("/api/v1/drives")
 @Tag(name = "주행·GPS")
 public class DrivePreparationController {
