@@ -44,6 +44,14 @@ public class NotificationService {
                 now, now.plus(30, ChronoUnit.DAYS));
     }
 
+    public void cardActivity(String sender, String recipient, String cardId, boolean completed, Instant now) {
+        Type type = completed ? Type.CARD_COMPLETED : Type.REFLECTION_SUBMITTED;
+        String key = type + ":" + cardId + (completed ? "" : ":" + sender);
+        String title = completed ? "드라이브 카드가 저장됐어요" : "상대가 드라이브 소감을 남겼어요";
+        notifications.insert("ntf_" + UUID.randomUUID(), key, sender, recipient, type, title,
+                "드라이브 카드를 확인해 보세요.", TargetType.CARD, cardId, now, now.plus(30, ChronoUnit.DAYS));
+    }
+
     public int countUnread(String userId) {
         return notifications.countUnread(userId, Instant.now());
     }

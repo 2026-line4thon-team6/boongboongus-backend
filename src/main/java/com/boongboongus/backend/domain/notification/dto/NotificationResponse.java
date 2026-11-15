@@ -8,7 +8,7 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.ALWAYS)
 public record NotificationResponse(String id, Type type, Sender sender, String title, String body,
         TargetType targetType, String targetId, Instant createdAt, Instant expiresAt, Instant readAt) {
-    public enum Type { PLACE_SHARED, REFLECTION_SUBMITTED, COUPLE_CONNECTED, COUPLE_DISCONNECTED }
+    public enum Type { PLACE_SHARED, REFLECTION_SUBMITTED, CARD_COMPLETED, COUPLE_CONNECTED, COUPLE_DISCONNECTED }
 
     public enum TargetType { PLACE, CARD, COUPLE }
 
