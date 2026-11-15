@@ -44,6 +44,15 @@ public class PlaylistRepository {
                 .param("created", OffsetDateTime.ofInstant(playlist.createdAt(), ZoneOffset.UTC)).update();
     }
 
+    public Optional<PlaylistResponse> latestForDrive(String driveId) {
+        return jdbc.sql("""
+                SELECT result_snapshot FROM playlists WHERE drive_id = :drive
+                ORDER BY created_at DESC, id DESC LIMIT 1
+                """).param("drive", driveId)
+                .query((row, index) -> json.readValue(row.getString("result_snapshot"), PlaylistResponse.class))
+                .optional();
+    }
+
     public Optional<Stored> find(String id) {
         return find(id, false);
     }

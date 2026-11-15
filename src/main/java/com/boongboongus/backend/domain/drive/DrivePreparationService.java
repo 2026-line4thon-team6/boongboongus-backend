@@ -1,5 +1,7 @@
 package com.boongboongus.backend.domain.drive;
 
+import com.boongboongus.backend.domain.card.CardStore;
+
 import com.boongboongus.backend.domain.drive.CurrentCoupleLookup.Couple;
 import com.boongboongus.backend.domain.drive.DrivePreparationStore.DriveRow;
 import com.boongboongus.backend.domain.drive.DrivePreparationStore.RequestKey;
@@ -32,6 +34,7 @@ public class DrivePreparationService {
     private static final String DEFAULT_TITLE = "우리의 드라이브";
 
     private final DrivePreparationStore store;
+    private final CardStore cards;
     private final ObjectProvider<CurrentCoupleLookup> couples;
     private final ObjectProvider<DriveRouteLookup> routes;
     private final ObjectProvider<DriveLocationConsentLookup> locationConsents;
@@ -40,10 +43,12 @@ public class DrivePreparationService {
     private final RestAreaService restAreas;
     private final StampService stamps;
 
-    DrivePreparationService(DrivePreparationStore store, ObjectProvider<CurrentCoupleLookup> couples,
+    DrivePreparationService(DrivePreparationStore store, CardStore cards,
+            ObjectProvider<CurrentCoupleLookup> couples,
             ObjectProvider<DriveRouteLookup> routes, ObjectProvider<DriveLocationConsentLookup> locationConsents,
             TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas, StampService stamps) {
         this.store = store;
+        this.cards = cards;
         this.couples = couples;
         this.routes = routes;
         this.locationConsents = locationConsents;
@@ -229,6 +234,7 @@ public class DrivePreparationService {
             }
             Instant now = controlTime(drive);
             store.end(drive, request.reason(), now);
+            cards.createForDrive(drive.id(), drive.title(), now);
             return findDrive(coupleId, driveId).view(now);
         });
     }
