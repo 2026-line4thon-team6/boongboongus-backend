@@ -4273,7 +4273,7 @@ paths:
         recorderUserId만 최대200개/회 전송한다. 주행 내 sequence 중복은 재집계하지 않는다. 일부 거절도200이므로 accepted/duplicate/rejected를 확인한다.
         GPS 시퀀스가 중간에 누락되어도 FE는 누락된 좌표를 기다리지 않고 이후 좌표를 전송한다. 서버는 이후 유효한 좌표를 반영하며 highestContiguousSequence는 1번부터 연속으로 반영한 마지막 번호를 반환한다.
         정확도50m 초과는 ACCURACY_TOO_LOW. 기록 시각이 실제 ACTIVE 구간에 속해야 하며 PAUSED 구간은 집계하지 않는다. 종료 후900초 이내에만 종료 이전 좌표를 반영하고
-        이후는 LATE_UPLOAD_WINDOW_CLOSED. GPS 갱신은 controlVersion·카드 편집 마감/버전을 늘리지 않는다. 도착 검증은 반경100m·30초 체류이며 검증된 최신 GPS 기준으로 앞으로 남은 경로 거리가 2km 이내인 휴게소는 restAreaAlerts에 주행·휴게소당 한 번 제공한다.
+        이후 또는 카드 삭제로 GPS 좌표를 정리한 뒤에는 410 GPS_UPLOAD_WINDOW_CLOSED를 반환한다. GPS 갱신은 controlVersion·카드 편집 마감/버전을 늘리지 않는다. 도착 검증은 반경100m·30초 체류이며 검증된 최신 GPS 기준으로 앞으로 남은 경로 거리가 2km 이내인 휴게소는 restAreaAlerts에 주행·휴게소당 한 번 제공한다.
         FE는 알림 id로 중복 표시를 방지한다. GPS 저장은 길찾기 공급자의 장애와 독립적으로 처리한다.
 
 
@@ -5533,7 +5533,7 @@ paths:
                   editableUntil: '2026-11-03T07:00:00Z'
                   completedAt: null
                   canEdit: true
-                  canDelete: true
+                  canDelete: false
                   version: 1
                 meta:
                   requestId: req_01
@@ -5672,7 +5672,7 @@ paths:
                   editableUntil: '2026-11-03T07:00:00Z'
                   completedAt: null
                   canEdit: true
-                  canDelete: true
+                  canDelete: false
                   version: 1
                 meta:
                   requestId: req_01
@@ -5717,10 +5717,11 @@ paths:
       description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
 
 
-        현재 두 멤버가 Card.version을 X-Expected-Version으로 전달하여 공동 카드를 삭제할 수 있다. 성공 즉시 양쪽 기록·지도·공유 링크에서 제외하고 완료 카드 수·기록
+        현재 두 멤버 중 한 명이 Card.version을 X-Expected-Version으로 전달하여 완료 카드를 삭제할 수 있다. 성공 즉시 양쪽 카드 상세·기록·지도·캘린더·공유 링크에서 제외하고 완료 카드 수·기록
         수·보존 완료 기록 기준 누적 거리를 함께 갱신한다. 삭제는 복구 불가. 다른 커플의 카드는 삭제하지 못한다. 미참조 사진은24시간 안 정리하고 다른 카드/사용자 참조 원본과 누적 스탬프는
         유지한다.
-        카드 삭제 시 해당 주행의 개별 GPS 좌표를 삭제한다.
+        첨부 사진의 기존 조회 URL은 삭제 확정 후 차단한다. 카드 삭제 시 접수된 대기 스탬프를 수신한 GPS로 마지막 검증하고 증거가 없으면 REJECTED로 처리한다.
+        그 뒤 해당 주행의 개별 GPS 좌표를 삭제하고 추가 GPS 수신을 닫는다. 이미 삭제된 카드는 404로 응답한다.
 
 
         **근거:** OFF p10-11 · [Figma 284:16663](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=284-16663)
@@ -5736,7 +5737,7 @@ paths:
         schema:
           type: integer
           example: 1
-          description: 문항 이동·완료·중단 시 증가하는 진행 제어 버전. 응답 PUT·힌트/정답 공개 자체는 증가시키지 않는다. 현재 questionId 불일치는409.
+          description: 카드의 현재 공통 버전.
           minimum: 1
         description: 카드 공통 version. 소감 전용 version과 구분.
       responses:
@@ -5780,7 +5781,6 @@ paths:
       - D08
       x-rollout-gated: false
       x-access-scope: COUPLE
-      x-implementation-status: PLANNED
       x-source-evidence:
         pdf: OFF p10-11
         figmaNodeIds:
@@ -5854,7 +5854,7 @@ paths:
                   editableUntil: '2026-11-03T07:00:00Z'
                   completedAt: null
                   canEdit: true
-                  canDelete: true
+                  canDelete: false
                   version: 2
                 meta:
                   requestId: req_01
@@ -11784,7 +11784,7 @@ components:
         canDelete:
           type: boolean
           example: true
-          description: ''
+          description: 현재 연결된 주행 멤버가 완료 카드를 삭제할 수 있으면 true.
         version:
           type: integer
           example: 1

@@ -61,6 +61,22 @@ public class CardStore {
                 .flatMap(id -> find(couple, id, false));
     }
 
+    void delete(String cardId) {
+        jdbc.sql("DELETE FROM drive_cards WHERE id = :id").param("id", cardId).update();
+    }
+
+    public CompletedTotals completedTotals(String coupleId) {
+        return jdbc.sql("""
+                SELECT COUNT(*) AS cards, COALESCE(SUM(d.distance_meters), 0) AS distance
+                FROM drive_cards c JOIN drives d ON d.id = c.drive_id
+                WHERE d.couple_id = :couple AND c.status = 'COMPLETED'
+                """).param("couple", coupleId).query((row, index) -> new CompletedTotals(
+                        row.getLong("cards"), Math.round(row.getDouble("distance")))).single();
+    }
+
+    public record CompletedTotals(long count, long distanceMeters) {
+    }
+
     void updateDraft(CardRow card, String title) {
         jdbc.sql("""
                 UPDATE drive_cards SET title = :title, version = version + 1,

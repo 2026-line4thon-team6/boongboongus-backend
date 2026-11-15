@@ -11,12 +11,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -265,6 +267,8 @@ class DriveCardIntegrationTest {
                 .param("start", LocalDate.of(2026, 1, 1)).update();
         mvc.perform(auth(get(path + "/share"), outsider)).andExpect(status().isNotFound());
         mvc.perform(auth(get(path), outsider)).andExpect(status().isNotFound());
+        mvc.perform(auth(delete(path), outsider).header("X-Couple-Id", "other_" + couple)
+                .header("X-Expected-Version", "1")).andExpect(status().isNotFound());
         mvc.perform(auth(get(API + "/records"), outsider)).andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.totalCount").value(0));
         mvc.perform(get(path + "/share")).andExpect(status().isUnauthorized());
@@ -275,6 +279,149 @@ class DriveCardIntegrationTest {
         mvc.perform(auth(get(path), passenger)).andExpect(status().isForbidden());
         mvc.perform(auth(get(API + "/records/calendar"), passenger).param("month", "2026-11"))
                 .andExpect(status().isForbidden());
+    }
+
+
+    @Test
+    void deletesCompletedCardForBothMembersAndPurgesOnlyItsData() throws Exception {
+        String id = endDrive();
+        mvc.perform(auth(get(cardPath(id)), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.canDelete").value(false));
+        mvc.perform(deleteCard(id, passenger, "1")).andExpect(status().is(422));
+        String removedPhoto = readyPhoto();
+        mvc.perform(draft(id, driver, photos(1, removedPhoto))).andExpect(status().isOk());
+        mvc.perform(reflect(id, driver, "삭제할 소감", true, 0)).andExpect(status().isOk());
+
+        var completed = data(mvc.perform(complete(id, driver, UUID.randomUUID().toString(), 2))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.canDelete").value(true)).andReturn());
+        URI signedPhoto = URI.create(completed.path("photos").get(0).path("url").asText());
+        mvc.perform(get(signedPhoto)).andExpect(status().isOk());
+
+        String date = completed.path("driveDate").asText();
+        String month = date.substring(0, 7);
+        String otherCard = recordId("survivor");
+        record("survivor", "COMPLETED", "남아 있는 기록", date + "T01:00:00Z", "destination_survivor",
+                "남아 있는 목적지", 37.5, 127);
+        String keptPhoto = readyPhoto();
+        jdbc.sql("""
+                UPDATE card_photo_uploads SET status = 'ATTACHED', card_id = :card, card_position = 0
+                WHERE id = :id
+                """).param("card", otherCard).param("id", keptPhoto).update();
+        String destination = json.writeValueAsString(new Place("destination_removed", "삭제할 목적지", "서울",
+                new Coordinate(37.6, 127)));
+        jdbc.sql("""
+                UPDATE drives SET distance_meters = 245.6, route_id = 'test_route',
+                    origin_snapshot = :place, destination_snapshot = :place WHERE id = :id
+                """).param("place", destination).param("id", drive).update();
+        jdbc.sql("UPDATE drives SET distance_meters = 100 WHERE id = :id")
+                .param("id", "drv_" + otherCard).update();
+
+        String visited = "rest_36d9396b955db6690ee21c41";
+        String missing = "rest_4bcd22619e7a8f962cf74fef";
+        OffsetDateTime now = OffsetDateTime.now();
+        seedPendingStamp("claim_visited", visited, now);
+        seedPendingStamp("claim_missing", missing, now);
+        jdbc.sql("""
+                INSERT INTO drive_gps_samples (drive_id, sequence, recorded_at, latitude, longitude)
+                SELECT :drive, 1, :recorded, latitude, longitude FROM rest_areas WHERE id = :area
+                """).param("drive", drive).param("recorded", now.minusMinutes(1)).param("area", visited).update();
+
+        mvc.perform(auth(get(API + "/couples/me"), passenger)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.couple.completedCardCount").value(2))
+                .andExpect(jsonPath("$.data.couple.cumulativeDistanceMeters").value(346));
+        mvc.perform(deleteCard(id, passenger, null)).andExpect(status().is(428));
+        mvc.perform(deleteCard(id, driver, "2")).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
+        mvc.perform(deleteCard(id, passenger, "3")).andExpect(status().isNoContent());
+        mvc.perform(deleteCard(id, driver, "3")).andExpect(status().isNotFound());
+
+        for (String user : java.util.List.of(driver, passenger)) {
+            mvc.perform(auth(get(cardPath(id)), user)).andExpect(status().isNotFound());
+            mvc.perform(auth(get(cardPath(id) + "/share"), user)).andExpect(status().isNotFound());
+            mvc.perform(auth(get(API + "/records"), user)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.totalCount").value(1))
+                    .andExpect(jsonPath("$.data.items[0].cardId").value(otherCard));
+            mvc.perform(auth(get(API + "/records/map"), user)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.totalCount").value(1))
+                    .andExpect(jsonPath("$.data.markers[0].latestCard.cardId").value(otherCard));
+            mvc.perform(auth(get(API + "/records/calendar"), user).param("month", month)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.days[0].count").value(1));
+            mvc.perform(auth(get(API + "/couples/me"), user)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.couple.completedCardCount").value(1))
+                    .andExpect(jsonPath("$.data.couple.cumulativeDistanceMeters").value(100));
+        }
+
+        mvc.perform(get(signedPhoto)).andExpect(status().isNotFound());
+        assertThat(Files.exists(storage.resolve(keptPhoto + ".ready"))).isTrue();
+        assertThat(photoState(keptPhoto)).isEqualTo("ATTACHED");
+        assertThat(photoState(removedPhoto)).isEqualTo("DELETED");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM card_reflections WHERE card_id = :id")
+                .param("id", id).query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM card_completion_push_events WHERE card_id = :id")
+                .param("id", id).query(Integer.class).single()).isZero();
+        assertThat(claimStatus("claim_visited")).isEqualTo("VERIFIED");
+        assertThat(claimStatus("claim_missing")).isEqualTo("REJECTED");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM rest_area_stamps WHERE first_drive_id = :id")
+                .param("id", drive).query(Integer.class).single()).isEqualTo(1);
+
+        var lateRequest = jsonRequest(post(API + "/drives/" + drive + "/gps-batches"), driver, """
+                {"samples":[{"sequence":2,"recordedAt":"%s","coordinate":{"latitude":37.6,"longitude":127.1},
+                 "accuracyMeters":8,"speedMetersPerSecond":null}]}
+                """.formatted(now.minusSeconds(30))).header("Idempotency-Key", UUID.randomUUID().toString());
+        mvc.perform(lateRequest).andExpect(status().isGone())
+                .andExpect(jsonPath("$.error.code").value("GPS_UPLOAD_WINDOW_CLOSED"));
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM drive_gps_samples WHERE drive_id = :drive")
+                .param("drive", drive).query(Integer.class).single()).isZero();
+
+        Path removedFile = storage.resolve(removedPhoto + ".ready");
+        Files.deleteIfExists(removedFile);
+        Path obstruction = Files.createFile(Files.createDirectory(removedFile).resolve("retry"));
+        Object media = context.getBean("mediaService");
+        ReflectionTestUtils.invokeMethod(media, "cleanupExpired");
+        assertThat(removedFile).exists();
+        Files.delete(obstruction);
+        ReflectionTestUtils.invokeMethod(media, "cleanupExpired");
+        assertThat(removedFile).doesNotExist();
+    }
+
+    @Test
+    void serializesCardDeletionAndSharedDraftEdit() throws Exception {
+        String id = endDrive();
+        mvc.perform(reflect(id, driver, "소감", true, 0)).andExpect(status().isOk());
+        mvc.perform(complete(id, driver, UUID.randomUUID().toString(), 1)).andExpect(status().isOk());
+        try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+            var edit = workers.submit(() -> mvc.perform(draft(id, driver, """
+                    {"expectedVersion":2,"title":"수정"}
+                    """)).andReturn().getResponse().getStatus());
+            var deletion = workers.submit(() -> mvc.perform(deleteCard(id, passenger, "2"))
+                    .andReturn().getResponse().getStatus());
+            if (edit.get() == 200) {
+                assertThat(deletion.get()).isEqualTo(409);
+                mvc.perform(deleteCard(id, passenger, "3")).andExpect(status().isNoContent());
+            } else {
+                assertThat(edit.get()).isEqualTo(404);
+                assertThat(deletion.get()).isEqualTo(204);
+            }
+        }
+        mvc.perform(auth(get(cardPath(id)), driver)).andExpect(status().isNotFound());
+    }
+
+    private MockHttpServletRequestBuilder deleteCard(String cardId, String user, String version) {
+        var request = auth(delete(cardPath(cardId)), user).header("X-Couple-Id", couple);
+        return version == null ? request : request.header("X-Expected-Version", version);
+    }
+
+    private void seedPendingStamp(String id, String area, OffsetDateTime now) {
+        jdbc.sql("""
+                INSERT INTO rest_area_stamp_claims (id, couple_id, drive_id, rest_area_id, status, created_at, updated_at)
+                VALUES (:id, :couple, :drive, :area, 'PENDING', :now, :now)
+                """).param("id", recordId(id)).param("couple", couple).param("drive", drive)
+                .param("area", area).param("now", now).update();
+    }
+
+    private String claimStatus(String id) {
+        return jdbc.sql("SELECT status FROM rest_area_stamp_claims WHERE id = :id")
+                .param("id", recordId(id)).query(String.class).single();
     }
 
     private void record(String card, String status, String testTitle, String started, String placeId, String name,

@@ -169,11 +169,19 @@ public class DrivePreparationService {
                 throw stateConflict();
             }
             Instant now = controlTime(drive);
-            if (drive.endedAt() != null && now.isAfter(drive.endedAt().plus(LATE_GPS_WINDOW))) {
+            if (drive.gpsPurgedAt() != null
+                    || (drive.endedAt() != null && now.isAfter(drive.endedAt().plus(LATE_GPS_WINDOW)))) {
                 throw error(HttpStatus.GONE, "GPS_UPLOAD_WINDOW_CLOSED", "GPS 업로드 가능 시간이 지났습니다.");
             }
             return recordGpsBatch(drive, request, now);
         });
+    }
+
+    // Called in the same transaction that deletes the card.
+    public void purgeCardGps(String coupleId, String driveId, Instant now) {
+        DriveRow drive = store.lockDrive(coupleId, driveId).orElseThrow(DrivePreparationService::driveNotFound);
+        stamps.resolvePending(drive, store.gpsHistory(drive.id()).values(), now, true);
+        store.purgeGps(driveId, now);
     }
 
     private DriveGps.Receipt recordGpsBatch(DriveRow drive, DriveGpsRequest.Batch request, Instant now) {
