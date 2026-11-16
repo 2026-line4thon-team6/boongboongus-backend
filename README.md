@@ -255,6 +255,6 @@ app:
 
 1. Bearer 토큰과 새 `Idempotency-Key`로 `POST /api/v1/radio/episodes`에 `{"mode":"USER_STORY","story":"오늘 운전해줘서 고마워!"}`를 보냅니다. 랜덤 방송은 `{"mode":"RANDOM"}`을 보냅니다.
 2. `GET /api/v1/jobs/{jobId}`에서 `SUCCEEDED`와 `resourceId`를 확인합니다.
-3. `GET /api/v1/radio/episodes/{episodeId}`로 대본과 음성 URL을 가져옵니다. 음성 URL에도 생성자의 Bearer 토큰을 보내야 하며 만료되면 상세를 다시 조회합니다.
+3. 생성자 본인의 Bearer 토큰으로 `GET /api/v1/radio/episodes/{episodeId}`를 호출해 대본과 음성 URL을 가져옵니다. 음성은 서명 URL로 토큰 없이 재생할 수 있습니다. URL을 아는 사람은 발급 후 10분 동안 재생할 수 있으므로 공유하지 않습니다. 만료되면 상세를 다시 조회합니다.
 
 4. 보낸 사연은 GET /api/v1/radio/episodes에서 확인합니다. 본인 USER_STORY 중 음성 생성이 완료된 항목만 최신순으로 반환합니다. q(최대 100자)는 원사연 또는 방송문구의 일부를 검색합니다. limit은 기본 20, 최대 100입니다. 다음 페이지는 같은 q와 응답의 data.nextCursor를 보냅니다.

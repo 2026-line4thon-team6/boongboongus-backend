@@ -30,7 +30,6 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 @RestController
-@SecurityRequirement(name = "bearerAuth")
 @RequestMapping("/api/v1/radio/episodes")
 class RadioController {
     private final RadioService radio;
@@ -40,6 +39,7 @@ class RadioController {
     }
 
     @PostMapping
+    @SecurityRequirement(name = "bearerAuth")
     @ResponseStatus(HttpStatus.ACCEPTED)
     ApiResponse<JobResponse> create(Principal principal, @RequestHeader("Idempotency-Key") String key,
             @Valid @RequestBody RadioRequest request) {
@@ -50,6 +50,7 @@ class RadioController {
     }
 
     @GetMapping
+    @SecurityRequirement(name = "bearerAuth")
     ResponseEntity<ApiResponse<RadioHistory>> history(Principal principal, @RequestParam(required = false) String q,
             @RequestParam(required = false) String cursor, @RequestParam(defaultValue = "20") int limit) {
         String origin = ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
@@ -58,6 +59,7 @@ class RadioController {
     }
 
     @GetMapping("/{episodeId}")
+    @SecurityRequirement(name = "bearerAuth")
     ResponseEntity<ApiResponse<RadioEpisode>> get(Principal principal, @PathVariable String episodeId) {
         String origin = ServletUriComponentsBuilder.fromCurrentContextPath().build().toUriString();
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
@@ -65,11 +67,11 @@ class RadioController {
     }
 
     @GetMapping(value = "/{episodeId}/audio", produces = "audio/mpeg")
-    ResponseEntity<byte[]> audio(Principal principal, @PathVariable String episodeId, @RequestParam long expires,
+    ResponseEntity<byte[]> audio(@PathVariable String episodeId, @RequestParam long expires,
             @RequestParam String signature) {
         return ResponseEntity.ok().cacheControl(CacheControl.noStore())
                 .contentType(MediaType.parseMediaType("audio/mpeg"))
-                .body(radio.audio(principal.getName(), episodeId, expires, signature));
+                .body(radio.audio(episodeId, expires, signature));
     }
 
     @ExceptionHandler(IdempotentWrite.KeyReused.class)

@@ -73,6 +73,13 @@ public class RadioRepository {
                 row.getString("broadcast_text"), row.getObject("created_at", OffsetDateTime.class).toInstant());
     }
 
+    public Optional<String> audioOwner(String id) {
+        return jdbc.sql("""
+                SELECT r.owner_user_id FROM radio_episodes r JOIN ai_jobs j ON j.id = r.job_id
+                WHERE j.resource_id = :id AND j.status = 'SUCCEEDED'
+                """).param("id", id).query(String.class).optional();
+    }
+
     public Optional<byte[]> audio(String owner, String id) {
         return jdbc.sql("""
                 SELECT r.audio FROM radio_episodes r JOIN ai_jobs j ON j.id = r.job_id

@@ -7706,6 +7706,45 @@ paths:
         - 342:8572
         kind: FEATURE
       x-policy-status: USER_CONFIRMED
+  /radio/episodes/{episodeId}/audio:
+    get:
+      operationId: streamRadioAudio
+      tags:
+      - 라디오
+      summary: 서명 URL로 라디오 음성 재생
+      description: 생성자 본인만 상세 또는 보관함에서 URL을 발급받는다. URL 소지자는 발급 후 10분 동안 음성을 재생할 수 있다. 만료 시 상세를 다시 조회한다.
+      security: []
+      parameters:
+      - name: episodeId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: expires
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+        description: URL이 만료되는 Unix 시각(초).
+      - name: signature
+        in: query
+        required: true
+        schema:
+          type: string
+        description: 서버가 URL에 포함한 서명.
+      responses:
+        '200':
+          description: MP3 음성
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /game-sessions:
     post:
       operationId: createGameSession
