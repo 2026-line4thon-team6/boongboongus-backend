@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: backend-ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   build:
@@ -49,3 +49,11 @@ jobs:
         run: chmod +x gradlew
       - name: Build and test
         run: ./gradlew clean build --no-daemon
+
+  deploy:
+    if: github.repository == '2026-line4thon-team6/boongboongus-backend' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    uses: ./.github/workflows/deploy.yml
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
