@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -34,6 +35,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest(properties = {
         "spring.config.import=classpath:legal-documents-test.yml",
+        "app.cors.allowed-origins=https://frontend.example.invalid",
         "GROQ_API_KEY=", "SPOTIFY_CLIENT_ID=", "SPOTIFY_CLIENT_SECRET=",
         "app.dj.tracks[0].id=trk_test",
         "app.dj.tracks[0].title=Test track",
@@ -93,7 +95,10 @@ class AuthTokenIntegrationTest {
         String expiredJwt = tokens.access(data.get("user").get("id").asText(), "session",
                 Instant.now().minusSeconds(1801));
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/me")
-                .header("Authorization", "Bearer " + expiredJwt)).andExpect(status().isUnauthorized())
+                        .header("Origin", "https://frontend.example.invalid")
+                        .header("Authorization", "Bearer " + expiredJwt))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Access-Control-Allow-Origin", "https://frontend.example.invalid"))
                 .andExpect(jsonPath("$.error.code").value("ACCESS_TOKEN_EXPIRED"));
         String invalidJwt = (access.startsWith("A") ? "B" : "A") + access.substring(1);
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/me")
