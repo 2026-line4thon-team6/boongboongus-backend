@@ -28,13 +28,115 @@ chmod +x gradlew
 | 주소 | 용도 |
 | --- | --- |
 | http://localhost:8080/api/v1/health | API 응답 및 공통 응답 형식 확인 |
+| `POST /api/v1/auth/authorizations` | 카카오 로그인 시작 및 로그인 URL 발급 |
+| http://localhost:8080/api/v1/app-config | 로그인 전 앱 설정과 기능 활성화 여부 조회 |
+| http://localhost:8080/api/v1/legal-documents | 현재 약관 목록과 본문 조회 |
+| http://localhost:8080/api/v1/faqs | FAQ 질문과 답변 조회 |
 | http://localhost:8080/actuator/health | 서버·DB 상태 확인 |
 | http://localhost:8080/swagger-ui.html | 구현된 API 문서 |
 | http://localhost:8080/v3/api-docs | OpenAPI JSON |
 
-현재 구현된 업무 외 엔드포인트는 상태 확인 API입니다. 주행·인증·커플 등 서비스 기능은 이후 도메인별로 구현합니다. Swagger에는 실제 구현된 API만 표시됩니다.
+앱 설정 API는 `application.yml`의 `app.public-config` 값을 반환합니다. 앱 내 음악 재생과 휴게소 상세는 연동 전까지 비활성화합니다. 주행·인증·커플 등 서비스 기능은 이후 도메인별로 구현합니다. Swagger에는 실제 구현된 API만 표시됩니다.
+
+약관은 `src/main/resources/legal-documents.yml`의 `app.legal.documents`에 등록하고 백엔드를 배포하면 반영됩니다. 각 항목에 `type`, `version`, `title`, `url`, `content`, `effective-date`를 넣습니다. `TERMS`와 `PRIVACY`는 필수, `OPEN_SOURCE`는 고지용입니다. 목록과 버전 생략 상세는 한국 날짜 기준으로 시행일이 가장 최근인 문서를 반환합니다. 시행일이 같으면 파일에서 뒤에 등록한 항목을 사용합니다. 상세 경로 `/api/v1/legal-documents/{type}?version=...`에서 등록된 특정 버전을 확인할 수 있으므로, 문서를 바꿀 때는 기존 버전을 보관하고 새 버전을 추가합니다. 팀이 확정한 원문을 등록하기 전에는 목록이 비어 있습니다.
+
+FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `answer`, `order`를 등록하고 백엔드를 배포하면 반영됩니다. 조회 결과는 `order` 오름차순이고, 등록된 항목이 없으면 빈 목록을 반환합니다.
+
+
+### 카카오 인증 코드 교환
+
+`POST /api/v1/auth/token`에 `Idempotency-Key`(16~128자)와 `authSessionId`, `authorizationCode`, `state`, `codeVerifier`를 보냅니다. 카카오 설정의 Client Secret이 활성 상태라면 서버에 `KAKAO_LOGIN_CLIENT_SECRET`을 설정합니다. `AUTH_TOKEN_KEY`에는 32바이트 이상을 무작위로 생성해 Base64로 인코딩한 서버 키를 설정합니다. 키는 재시작 후에도 유지하며 Git에 올리지 않습니다.
+
+액세스 JWT는 30분, 랜덤 리프레시 토큰은 14일 동안 유효합니다. 리프레시 토큰 해시는 세션에 저장되며, 성공 응답은 동일 요청 재시도를 위해 암호화되어 24시간 동안 재사용됩니다. 로그인 시작 시도 소비, 회원 생성, 서비스 세션 저장은 한 DB 트랜잭션에서 처리합니다. 카카오 코드 교환 이후 응답을 저장하기 전에 장애가 나면 새 로그인 시도가 필요할 수 있습니다.
+
+호출 제한 및 만료 데이터 정리는 후속 작업입니다. 일반 로그아웃 시 기존 액세스 JWT는 만료까지 유효한 정책을 적용합니다.
+
+
+### 토큰 갱신
+
+`POST /api/v1/auth/refresh`에 `Idempotency-Key`(16~128자)와 `refreshToken`을 보냅니다. 성공 시 30분 액세스 JWT와 갱신 시점부터 14일간 유효한 새 리프레시 토큰을 반환합니다. 응답을 받지 못하면 동일 토큰과 키로 30초 안에 재시도할 수 있습니다. 이 조건을 벗어나 사용된 토큰이 다시 들어오면 해당 세션을 폐기합니다. 앱에서는 동시에 하나의 갱신 요청만 보내고 성공 시 두 토큰을 교체합니다.
+
+### 현재 기기 로그아웃
+
+`POST /api/v1/auth/logout`에 `Idempotency-Key`(16~128자), `refreshToken`, `deviceId`를 보냅니다. 서버는 해당 세션의 갱신을 막고, 지정한 기기의 푸시 등록이 세션 소유자에 속하면 해제합니다. 성공 또는 이미 종료된 세션은 본문 없이 `204`를 반환합니다. 앱은 성공 후 두 토큰을 지웁니다. 기존 액세스 JWT는 만료까지 유효합니다. 푸시 등록 API는 커플·기기 작업에서 연결합니다.
+
+### 내 계정 조회
+
+`GET /api/v1/me`에 `Authorization: Bearer <accessToken>`을 보내면 현재 회원 프로필을 반환합니다. 가입 절차를 아직 마치지 않은 회원도 조회할 수 있습니다. 액세스 JWT는 DB 조회 없이 검증하며, 프로필은 DB에서 읽습니다. 토큰이 없거나 유효하지 않으면 `401 AUTHENTICATION_REQUIRED`, 만료됐으면 `401 ACCESS_TOKEN_EXPIRED`를 반환합니다.
+
+### 가입 완료와 프로필 수정
+
+`PUT /api/v1/me/onboarding`은 Bearer 액세스 토큰, `nickname`, `birthDate`(미수집 시 null), `consents`를 받습니다. `GET /api/v1/legal-documents`와 같은 문서 설정에서 현재 `TERMS`·`PRIVACY` 버전을 확인합니다. 승인된 두 문서를 `src/main/resources/legal-documents.yml`에 등록해야 가입을 완료할 수 있습니다. 동의 이력과 가입 프로필은 함께 저장됩니다.
+
+`PATCH /api/v1/me`는 `nickname`과 `birthDate` 중 전달한 필드만 바꿉니다. `birthDate: null`은 생년월일을 지우고, 빈 요청과 미래 생년월일은 거절합니다. 두 API 모두 갱신된 내 프로필을 반환합니다.
+
+### 탈퇴용 카카오 본인 재인증
+
+`POST /api/v1/auth/reauth/authorizations`에 Bearer 액세스 토큰과 `Idempotency-Key`(16~128자)를 보내고, 본문에 `provider=KAKAO`, `redirectUri`, `codeChallenge`를 전달합니다. 현재 회원에 연결된 10분짜리 재인증 시도와 카카오 로그인 URL을 반환합니다.
+
+카카오 콜백 뒤 `POST /api/v1/auth/reauth`에 Bearer 액세스 토큰, 새 `Idempotency-Key`, `authSessionId`, `authorizationCode`, `state`, `codeVerifier`를 보냅니다. 카카오 계정이 현재 회원과 일치하면 탈퇴 목적의 5분짜리 `reauthToken`을 반환합니다. 계정이 다르면 `403 REAUTH_SUBJECT_MISMATCH`를 반환합니다. 계정 삭제와 증명 소비는 회원 탈퇴 API에서 연결합니다.
+
+### 회원 탈퇴 연동 상태
+
+`DELETE /api/v1/me`는 Bearer 액세스 토큰과 `X-Reauth-Token`으로 본인 증명을 확인합니다. 준비·진행·일시중단 주행이 있으면 `409 ACTIVE_DRIVE_EXISTS`입니다. 현재는 조건을 통과해도 `503 SERVICE_UNAVAILABLE`을 반환합니다. 카카오 및 연결된 공급자 해제, 주행 시작과의 동시 처리, 커플·개인 데이터 정리, 탈퇴 계정의 JWT 차단이 연결된 뒤에만 탈퇴를 완료합니다.
+
+### 현재 커플 조회
+
+`GET /api/v1/couples/me`는 Bearer 액세스 토큰이 필요합니다. 연결 이력이 없으면 `UNLINKED`, 해제 이력만 있으면 `DISCONNECTED`를 반환하며 두 경우 모두 `couple`은 null입니다. 앱은 두 상태에서 커플 연결하기 버튼을 표시합니다. 현재 연결이 있으면 `CONNECTED`와 현재 두 멤버, 이름, 시작일을 반환합니다. D+는 한국 날짜 기준 시작 당일이 1입니다. 누적 거리와 완료 카드 수는 기록 기능을 연결하기 전까지 0입니다.
+
+### 커플 초대 코드 발급
+
+`POST /api/v1/couple-invites`는 Bearer 액세스 토큰과 `Idempotency-Key`(16~128자)를 받으며 요청 본문은 없습니다. 유효한 기존 코드가 있으면 같은 코드를 반환하고, 없으면 24시간짜리 코드를 발급합니다. 두 경우 모두 `201`이며, 이미 연결된 회원이 새로 발급을 요청하면 `409 ALREADY_COUPLED`를 반환합니다. 앱은 코드 길이를 가정하지 않습니다.
+
+`GET /api/v1/couple-invites/me`는 Bearer 토큰으로 내 유효 초대만 조회합니다. 코드가 없거나 만료됐으면 `404 INVITE_NOT_FOUND`를 반환합니다. 조회로 새 코드가 발급되거나 유효기간이 바뀌지 않습니다.
+
+### 초대 코드로 커플 연결
+
+`POST /api/v1/couples`에 Bearer 액세스 토큰과 `Idempotency-Key`(16~128자), 본문의 `code`를 전달합니다. 코드는 앞뒤 공백과 대소문자를 무시해 비교합니다. 연결 성공 시 `201`과 커플 정보를 반환하고, 코드는 한 번만 소비됩니다. 이름과 시작일은 각 항목별로 발급자 후보, 참가자 후보, 기본값 순서로 선택합니다. 같은 상대와 해제한 이력이 있으면 `409 COUPLE_RESTORE_REQUIRED`를 반환합니다.
+
+### 커플 연결 해제
+
+`DELETE /api/v1/couples/me`에 Bearer 토큰과 현재 관계의 `X-Couple-Id`를 보냅니다. 활성 주행이 있으면 `409 ACTIVE_DRIVE_EXISTS`, 현재 관계와 다르면 `403 COUPLE_CONTEXT_CHANGED`를 반환합니다. 성공 및 동일한 마지막 관계의 해제 재시도는 `204`입니다. 기존 기록은 보존하고 현재 커플 권한을 필요로 하는 접근을 차단합니다. 앱은 성공 후 마이 화면으로 이동합니다.
+
+### 이전 커플 연결 복구
+
+`POST /api/v1/couples/restore`에 Bearer 토큰, `Idempotency-Key`와 상대가 새로 발급한 유효 초대 코드 `code`를 보냅니다. 두 회원이 미연결이고 동일 상대의 해제 이력이 있을 때 가장 최근 관계를 복구합니다. 성공 시 `200`과 기존 커플 ID·이름·시작일, 증가한 버전을 반환합니다. 복구와 코드 사용 처리는 같은 트랜잭션으로 묶습니다. 이전 관계가 없으면 `404 COUPLE_HISTORY_NOT_FOUND`를 반환합니다.
+
+### 커플 시작일 변경
+
+`PATCH /api/v1/couples/me`에 Bearer 토큰, 현재 관계의 `X-Couple-Id`, 본문의 `startDate`와 `expectedVersion`을 보냅니다. 두 멤버 모두 수정할 수 있습니다. 미래 날짜는 `422 INVALID_START_DATE`, 버전이 다르면 `409 VERSION_CONFLICT`입니다. 성공 응답에는 변경된 시작일, 한국 날짜 기준 D+, 증가한 버전이 들어 있습니다.
+
+### 붕붕이 이름 변경
+
+`PATCH /api/v1/couples/me/mascot-name`에 Bearer 토큰, `X-Couple-Id`, 본문의 `name`과 `expectedVersion`을 보냅니다. 연결된 두 멤버가 수정할 수 있고, 이름은 앞뒤 공백을 제외하고 1~20자입니다. 시작일 수정과 같은 커플 버전을 사용합니다. 성공 시 바뀐 이름과 증가한 버전을 반환하며, 버전이 다르면 `409 VERSION_CONFLICT`를 반환합니다.
+
+### 초대 코드 폐기와 기기 푸시 등록
+
+- `DELETE /api/v1/couple-invites/{inviteId}`는 내 초대 코드의 효력을 없애고 `204`를 반환합니다. 이미 연결에 사용한 코드는 `409 INVITE_ALREADY_USED`입니다. 폐기 후 새 코드를 발급할 때 새 `Idempotency-Key`를 사용합니다.
+- `PUT /api/v1/devices/{deviceId}/push-token`에 `token`, `platform`(IOS/ANDROID/WEB), `enabled`를 보냅니다. 동일 기기에서 계정이 바뀌면 등록이 현재 계정으로 이동합니다. 성공 응답은 `200`과 `accepted: true`입니다.
+- `DELETE /api/v1/devices/{deviceId}/push-token`은 내 등록만 삭제합니다. 다른 계정에 등록됐거나 등록이 없으면 `204`를 반환합니다. 세 API 모두 Bearer 토큰이 필요합니다.
+
+### 인앱 알림 조회와 읽음 처리
+
+`GET /api/v1/notifications`는 Bearer 토큰으로 본인의 미만료 알림을 최신순으로 반환합니다. `limit` 기본값은 20이며 1~100을 지원합니다. `unreadOnly=true`로 읽지 않은 항목만 조회할 수 있습니다. 다음 페이지에는 응답의 `nextCursor`와 같은 조회 조건을 사용합니다. 알림의 보관 기간은 30일이며 만료 항목을 정리합니다.
+
+`PATCH /api/v1/notifications/{notificationId}/read`는 요청 본문 없이 내 알림을 읽음 처리하고 갱신한 항목을 반환합니다. 이미 읽은 알림의 `readAt`은 유지합니다. 다른 회원의 알림이나 만료된 알림은 `404`입니다. 장소 공유, 커플 연결·복구·해제 시 상대 회원의 인앱 알림을 저장합니다. 홈의 미확인 알림 수에는 읽지 않은 미만료 알림만 포함됩니다. 소감 제출과 실제 푸시 전달은 해당 기능 연동 시 추가합니다.
+
+### AI 생성 작업 조회·취소
+
+`GET /api/v1/jobs/{jobId}`로 로그인한 본인의 생성 상태와 결과 ID를 조회합니다. 진행 중에는 `retryAfterSeconds` 뒤에 다시 조회하고, 종료 상태에서는 조회를 중단합니다. 만료된 작업 조회는 `410 JOB_EXPIRED`를 반환합니다.
+
+`POST /api/v1/jobs/{jobId}/cancel`은 Bearer 토큰과 `Idempotency-Key`(16~128자)를 받습니다. 대기·실행 중인 작업은 `CANCEL_REQUESTED`가 되고 서버가 `CANCELLED`로 마무리합니다. 성공·실패가 먼저 반영된 작업에는 `409 JOB_ALREADY_FINISHED`를 반환합니다. DJ·라디오·게임 생성 작업은 각 기능에서 접수하고 결과를 저장합니다. 생성 작업의 조회 유효기간은 24시간으로 설정했습니다.
+
+### 커플 게임
+
+`POST /api/v1/game-sessions`는 Bearer 토큰, `X-Couple-Id`, `Idempotency-Key`와 `driveId`, `type`을 받습니다. 작업이 성공하면 `resourceId`로 `GET /api/v1/game-sessions/{gameSessionId}`를 호출합니다. 세트는 5문항이며 밸런스는 최소 한 명의 응답, 넌센스는 정답 공개 뒤 진행할 수 있습니다. 추억 게임은 응답 없이도 진행할 수 있습니다. 마지막 문항에서는 `complete`를 사용합니다.
+
+밸런스·넌센스는 서버 문항 목록을 사용합니다. 추억 게임은 현재 커플 구성원이 참여한 종료(`ENDED`) 주행의 제목을 사용하며 기록이 없으면 작업이 `MEMORY_RECORDS_REQUIRED`로 실패합니다. GPS 주행을 종료하거나 준비 주행을 취소하면 진행 중인 게임은 `ABANDONED`가 됩니다.
 
 ## PostgreSQL 개발 환경
+
+카카오 로그인을 시작하려면 서버의 `.env` 또는 환경변수에 `KAKAO_LOGIN_REST_API_KEY`와 `KAKAO_LOGIN_REDIRECT_URIS`를 설정합니다. 콜백 주소는 카카오디벨로퍼스에 등록한 값과 정확히 일치해야 하며, 여러 주소는 쉼표로 구분합니다. 요청에는 `provider=KAKAO`, `purpose=LOGIN`, `redirectUri`와 앱이 생성한 S256 `codeChallenge`(43자)를 보냅니다. 성공하면 `201`과 카카오 로그인 URL, `authSessionId`, `state`, 10분 후의 만료 시각을 반환합니다. Flyway는 로그인 시도를 저장할 `auth_sessions` 테이블을 생성합니다. 토큰 교환, 만료 세션 정리와 로그인 시작 요청의 호출 제한은 후속 작업입니다.
 
 기본 `local`과 `dev`는 PostgreSQL에 연결합니다. 위에서 만든 `.env`와 DB를 그대로 사용하며, `dev` 프로필로 실행할 때는 다음 명령을 사용합니다.
 
@@ -46,16 +148,32 @@ macOS/Linux에서는 `./gradlew`를 사용합니다. 이미 설치된 PostgreSQL
 
 | 프로필 | 데이터베이스 | 스키마 | Swagger |
 | --- | --- | --- | --- |
-| `local` (기본) | `.env`의 PostgreSQL | `update` | 켜짐 |
-| `dev` | `.env`의 PostgreSQL | `update` | 켜짐 |
-| `test` | 기본 H2 PostgreSQL 모드 / CI는 PostgreSQL | 테스트용 생성·삭제 | 켜짐 |
+| `local` (기본) | `.env`의 PostgreSQL | `validate` | 켜짐 |
+| `dev` | `.env`의 PostgreSQL | `validate` | 켜짐 |
+| `test` | 기본 H2 PostgreSQL 모드 / CI는 PostgreSQL | `validate` | 켜짐 |
 | `prod` | 환경변수의 PostgreSQL | `validate` | 꺼짐 |
 
-H2는 자동 테스트 의존성에만 포함됩니다. PostgreSQL 전용 쿼리·제약은 실제 PostgreSQL에서도 검증합니다. GitHub CI는 PostgreSQL 서비스에 연결해서 테스트합니다. 운영 스키마는 배포 전에 별도 마이그레이션 절차를 정해야 합니다.
+H2는 자동 테스트 의존성에만 포함됩니다. 애플리케이션 시작 시 Flyway가 `src/main/resources/db/migration`의 SQL을 버전 순서대로 적용합니다. 첫 마이그레이션은 `drives`와 `drive_idempotency`를 생성합니다. 운영 배포 전에는 신규 스키마와 마이그레이션 계정 권한을 확인합니다. GitHub CI는 PostgreSQL 서비스에 연결해서 테스트합니다.
+
+### 주행 준비 API
+
+- `POST /api/v1/drives`는 주행 준비 세션을 생성합니다. 커플당 준비·주행·일시중단 상태를 합쳐 한 건만 저장할 수 있습니다.
+- `GET /api/v1/drives/active`는 현재 커플의 진행 가능한 세션을 조회합니다. 해당 세션이 없으면 `data.drive`가 `null`입니다.
+- `POST /api/v1/drives/{driveId}/cancel`은 `expectedVersion`이 일치하는 준비 세션을 취소합니다.
+
+생성·취소에는 `Idempotency-Key`와 `X-Couple-Id`가 필요합니다. 동일 사용자와 커플이 24시간 안에 같은 키로 같은 요청을 다시 보내면 원래 응답 데이터를 돌려줍니다. 키가 만료되면 새 요청으로 처리합니다.
+
+인증 모듈은 서블릿 `Principal`에 검증한 서비스 사용자 ID를 설정하고, 커플 모듈은 `CurrentCoupleLookup`으로 현재 연결과 두 멤버를 제공해야 합니다. 경로를 지정하는 준비 요청은 `DriveRouteLookup`이 제공하는 접근 가능한 경로를 사용합니다. 현재 통합 테스트는 서버 측 테스트 구현으로 각 연동을 검증합니다.
 
 PostgreSQL 데이터는 Docker의 `postgres-data` 볼륨에 보존됩니다. PostgreSQL18 공식 이미지의 볼륨 경로는 `/var/lib/postgresql`입니다. 초기 DB·계정·비밀번호 환경변수는 빈 볼륨을 처음 초기화할 때 적용됩니다. [공식 이미지 안내](https://hub.docker.com/_/postgres)를 참고하세요.
 
 운영 환경은 `SPRING_PROFILES_ACTIVE=prod`, `DB_HOST`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`, `CORS_ALLOWED_ORIGINS`를 설정합니다. `DB_PORT` 기본값은5432, `SERVER_PORT`는8080입니다. DB 세션·JDBC 시간대는 UTC입니다. 프론트 허용 Origin은 쉼표로 구분합니다. 인증·접근 제어는 아직 구현 전이므로 서비스 공개 전에 추가합니다.
+
+### 드라이브 카드 사진 저장소
+
+단일 EC2의 EBS에 사진 전용 디렉터리를 미리 만들고, 앱 실행 계정에 쓰기 권한을 부여합니다. Docker를 쓰는 경우 해당 디렉터리를 컨테이너에 바인드 마운트하고 `MEDIA_STORAGE_ROOT`에 컨테이너 내부 경로를 지정합니다. PostgreSQL의 `card_photo_uploads.storage_path`에는 이 디렉터리 기준 상대 경로를 저장합니다. EBS가 연결된 상태에서 앱을 시작합니다.
+
+`MEDIA_PUBLIC_BASE_URL`에는 프런트가 접근할 수 있는 API 기본 주소를, `MEDIA_SIGNING_KEY`에는 무작위 서명 키를 설정합니다. 발급 URL의 쿼리 문자열은 로그에 기록하지 않습니다.
 
 ## 빌드와 테스트
 
@@ -83,6 +201,39 @@ com.boongboongus.backend
 
 기본 프론트 Origin은 `http://localhost:3000`, `http://localhost:5173`입니다. 쿠키 인증 대신 향후 Bearer 인증을 연결하는 구성이며, 인증 구현에 맞춰 CORS를 조정합니다.
 
+## DJ 플레이리스트 추천
+
+1. Swagger에서 Bearer 토큰과 함께 `POST /api/v1/playlists`를 호출합니다. `Idempotency-Key` 헤더에는 UUID를 넣고, 본문에는 예를 들어 `{"moods":["ROMANTIC"],"weather":"SUNNY","genres":["K_POP"]}`를 보냅니다. 선택 가능한 코드는 `GET /api/v1/app-config`에 있습니다.
+2. `202` 응답의 `data.id`로 `GET /api/v1/jobs/{jobId}`를 조회합니다. `SUCCEEDED`이면 `data.resourceId`가 플레이리스트 ID입니다.
+3. `GET /api/v1/playlists/{playlistId}`로 곡 목록을 조회합니다.
+4. `PATCH /api/v1/playlists/{playlistId}/tracks`에 남길 곡 ID를 새 순서대로 `trackIds`에 넣고, 조회한 `version`을 `expectedVersion`으로 보냅니다. 주행에 연결된 목록은 현재 연결된 운전자와 동승자가 함께 편집할 수 있습니다. 주행 없이 만든 목록은 생성자가 편집합니다. 다른 편집이 먼저 저장되면 `409 VERSION_CONFLICT`를 반환합니다.
+
+5. `PUT /api/v1/me/playlists/{playlistId}`로 내 보관함에 추가합니다. 같은 요청을 반복해도 한 번만 저장됩니다.
+6. `GET /api/v1/me/playlists`로 보관함을 조회합니다. 다음 페이지에는 응답의 `nextCursor`를 `cursor`로 전달합니다.
+7. `DELETE /api/v1/me/playlists/{playlistId}`로 내 보관을 취소합니다. 성공 응답은 `204`입니다.
+
+서버 환경변수 또는 로컬 `.env`에 `GROQ_API_KEY`, `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`을 설정하면 Groq와 Spotify로 추천합니다. Groq 모델은 `GROQ_DJ_MODEL`로 설정할 수 있으며 기본값은 `openai/gpt-oss-20b`입니다. Groq에는 분위기·날씨·장르와 요청할 후보 수를 보내고, 서버가 Spotify KR 검색에서 제목과 가수가 맞는 곡을 골라 결과를 구성합니다.
+
+외부 API 설정 없이 로컬에서 확인하려면 `src/main/resources/dj-tracks.yml`의 `app.dj.tracks` 목록을 사용합니다. 목록이 비어 있으면 생성 API가 `503 SERVICE_UNAVAILABLE`을 반환합니다. 팀에서 사용할 곡의 메타데이터를 다음 구조로 등록하세요.
+
+```yaml
+app:
+  dj:
+    tracks:
+      - id: trk_example
+        title: 예시 곡
+        artist: 예시 아티스트
+        duration-seconds: 240
+        provider-track-id: example01
+        provider-uri: example:track:01
+        external-url: https://music.example.invalid/track/01
+        moods: [ROMANTIC]
+        weather: [SUNNY]
+        genres: [K_POP]
+```
+
+주행 ID가 없거나 목적지가 없는 주행이면 목표 시간을 3600초로 잡습니다. 목적지가 있는 주행은 최근 GPS 좌표(없으면 출발지)와 목적지로 카카오 길찾기 예상 시간을 계산합니다.
+
 ## GitHub 협업
 
 팀 작업 기준은 [CONTRIBUTING.md](CONTRIBUTING.md), AI 공통 지침은 [AGENTS.md](AGENTS.md)를 참고합니다.
@@ -97,3 +248,13 @@ com.boongboongus.backend
 - PR도 기본 본문 템플릿을 사용하며 전체 내용을 한 번에 수정·붙여넣기 가능
 
 브랜치 보호는 저장소 관리자가 GitHub Settings → Rules → Rulesets에서 별도로 설정합니다. PR 승인1명과 `Build and test` 체크 필수를 권장합니다. 이 저장소 파일만으로 GitHub의 보호 규칙이나 Secrets가 설정되지는 않습니다.
+
+## AI 라디오
+
+로컬 테스트에는 `GROQ_API_KEY`와 Text to Speech 권한이 있는 `ELEVENLABS_API_KEY`를 로컬 `.env`에 설정하고 서버를 시작합니다. Groq는 사연의 핵심을 담은 짧은 한국어 대본을 작성합니다. 대본은 공백과 문장부호를 포함해 최대 250자이며, 초과하면 음성을 생성하기 전에 작업이 실패합니다. 유효한 대본은 ElevenLabs에서 MP3로 변환합니다.
+
+1. Bearer 토큰과 새 `Idempotency-Key`로 `POST /api/v1/radio/episodes`에 `{"mode":"USER_STORY","story":"오늘 운전해줘서 고마워!"}`를 보냅니다. 랜덤 방송은 `{"mode":"RANDOM"}`을 보냅니다.
+2. `GET /api/v1/jobs/{jobId}`에서 `SUCCEEDED`와 `resourceId`를 확인합니다.
+3. `GET /api/v1/radio/episodes/{episodeId}`로 대본과 음성 URL을 가져옵니다. 음성 URL에도 생성자의 Bearer 토큰을 보내야 하며 만료되면 상세를 다시 조회합니다.
+
+4. 보낸 사연은 GET /api/v1/radio/episodes에서 확인합니다. 본인 USER_STORY 중 음성 생성이 완료된 항목만 최신순으로 반환합니다. q(최대 100자)는 원사연 또는 방송문구의 일부를 검색합니다. limit은 기본 20, 최대 100입니다. 다음 페이지는 같은 q와 응답의 data.nextCursor를 보냅니다.

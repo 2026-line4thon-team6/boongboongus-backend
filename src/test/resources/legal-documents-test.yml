@@ -1,0 +1,33 @@
+app:
+  legal:
+    documents:
+      - type: TERMS
+        version: v1
+        title: 이전 약관
+        url: https://example.invalid/legal/terms/v1
+        content: 테스트용 이전 본문
+        effective-date: "2000-01-01"
+      - type: TERMS
+        version: v2
+        title: 현재 약관
+        url: https://example.invalid/legal/terms/v2
+        content: 테스트용 현재 본문
+        effective-date: "2001-01-01"
+      - type: TERMS
+        version: v3
+        title: 시행 예정 약관
+        url: https://example.invalid/legal/terms/v3
+        content: 테스트용 시행 예정 본문
+        effective-date: "9999-01-01"
+      - type: PRIVACY
+        version: v1
+        title: 개인정보 문서
+        url: https://example.invalid/legal/privacy/v1
+        content: 테스트용 개인정보 본문
+        effective-date: "2000-01-01"
+      - type: OPEN_SOURCE
+        version: v1
+        title: 오픈소스 고지
+        url: https://example.invalid/legal/open-source/v1
+        content: 테스트용 고지 본문
+        effective-date: "2000-01-01"
