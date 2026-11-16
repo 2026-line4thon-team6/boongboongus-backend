@@ -7,6 +7,7 @@ import com.boongboongus.backend.domain.drive.DrivePreparationStore.DriveRow;
 import com.boongboongus.backend.domain.drive.DrivePreparationStore.RequestKey;
 import com.boongboongus.backend.domain.drive.DrivePreparationStore.StoredRequest;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Route;
+import com.boongboongus.backend.domain.game.repository.GameRepository;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.Principal;
@@ -42,11 +43,13 @@ public class DrivePreparationService {
     private final JsonMapper json;
     private final RestAreaService restAreas;
     private final StampService stamps;
+    private final GameRepository games;
 
     DrivePreparationService(DrivePreparationStore store, CardStore cards,
             ObjectProvider<CurrentCoupleLookup> couples,
             ObjectProvider<DriveRouteLookup> routes, ObjectProvider<DriveLocationConsentLookup> locationConsents,
-            TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas, StampService stamps) {
+            TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas, StampService stamps,
+            GameRepository games) {
         this.store = store;
         this.cards = cards;
         this.couples = couples;
@@ -56,6 +59,7 @@ public class DrivePreparationService {
         this.json = json;
         this.restAreas = restAreas;
         this.stamps = stamps;
+        this.games = games;
     }
 
     DriveView prepare(Principal principal, String coupleId, String key, DrivePreparationRequest request) {
@@ -97,6 +101,7 @@ public class DrivePreparationService {
             DriveRow drive = lockVersion(coupleId, driveId, request.expectedVersion());
             requireState(drive, "PREPARING");
             store.cancel(drive);
+            games.abandonForDrive(drive.id());
             return findDrive(coupleId, driveId).view();
         });
     }
@@ -242,6 +247,7 @@ public class DrivePreparationService {
             }
             Instant now = controlTime(drive);
             store.end(drive, request.reason(), now);
+            games.abandonForDrive(drive.id());
             cards.createForDrive(drive.id(), drive.title(), now);
             return findDrive(coupleId, driveId).view(now);
         });

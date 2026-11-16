@@ -7,6 +7,7 @@ import com.boongboongus.backend.domain.couple.dto.CoupleInviteResponse;
 import com.boongboongus.backend.domain.couple.service.CoupleInviteService;
 import com.boongboongus.backend.domain.couple.service.CoupleConnectService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.server.ResponseStatusException;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@SecurityRequirement(name = "bearerAuth")
 class CoupleInviteController {
     private final CoupleInviteService invites;
 

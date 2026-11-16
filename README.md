@@ -126,7 +126,13 @@ FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `an
 
 `GET /api/v1/jobs/{jobId}`로 로그인한 본인의 생성 상태와 결과 ID를 조회합니다. 진행 중에는 `retryAfterSeconds` 뒤에 다시 조회하고, 종료 상태에서는 조회를 중단합니다. 만료된 작업 조회는 `410 JOB_EXPIRED`를 반환합니다.
 
-`POST /api/v1/jobs/{jobId}/cancel`은 Bearer 토큰과 `Idempotency-Key`(16~128자)를 받습니다. 대기·실행 중인 작업은 `CANCEL_REQUESTED`가 되고 서버가 `CANCELLED`로 마무리합니다. 성공·실패가 먼저 반영된 작업에는 `409 JOB_ALREADY_FINISHED`를 반환합니다. DJ·라디오·게임의 작업 생성과 결과 저장은 해당 기능에서 연결합니다. 생성 작업의 조회 유효기간은 24시간으로 설정했습니다.
+`POST /api/v1/jobs/{jobId}/cancel`은 Bearer 토큰과 `Idempotency-Key`(16~128자)를 받습니다. 대기·실행 중인 작업은 `CANCEL_REQUESTED`가 되고 서버가 `CANCELLED`로 마무리합니다. 성공·실패가 먼저 반영된 작업에는 `409 JOB_ALREADY_FINISHED`를 반환합니다. DJ·라디오·게임 생성 작업은 각 기능에서 접수하고 결과를 저장합니다. 생성 작업의 조회 유효기간은 24시간으로 설정했습니다.
+
+### 커플 게임
+
+`POST /api/v1/game-sessions`는 Bearer 토큰, `X-Couple-Id`, `Idempotency-Key`와 `driveId`, `type`을 받습니다. 작업이 성공하면 `resourceId`로 `GET /api/v1/game-sessions/{gameSessionId}`를 호출합니다. 세트는 5문항이며 밸런스는 최소 한 명의 응답, 넌센스는 정답 공개 뒤 진행할 수 있습니다. 추억 게임은 응답 없이도 진행할 수 있습니다. 마지막 문항에서는 `complete`를 사용합니다.
+
+밸런스·넌센스는 서버 문항 목록을 사용합니다. 추억 게임은 현재 커플 구성원이 참여한 종료(`ENDED`) 주행의 제목을 사용하며 기록이 없으면 작업이 `MEMORY_RECORDS_REQUIRED`로 실패합니다. GPS 주행을 종료하거나 준비 주행을 취소하면 진행 중인 게임은 `ABANDONED`가 됩니다.
 
 ## PostgreSQL 개발 환경
 

@@ -3,15 +3,20 @@ package com.boongboongus.backend.domain.auth.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.boongboongus.backend.domain.auth.model.AuthSession;
 import com.boongboongus.backend.domain.auth.repository.AuthSessionRepository;
+import com.boongboongus.backend.domain.job.dto.JobResponse;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,6 +26,10 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest(properties = {
@@ -51,6 +60,7 @@ class AuthTokenIntegrationTest {
     @Autowired private JdbcClient jdbc;
     @Autowired private JsonMapper json;
     @Autowired private ServiceTokens tokens;
+    @Autowired private TransactionTemplate transaction;
     @Autowired private com.boongboongus.backend.domain.job.service.JobService jobs;
     @MockitoBean private KakaoLoginClient kakao;
 
@@ -876,6 +886,222 @@ class AuthTokenIntegrationTest {
         jdbc.sql("UPDATE couples SET disconnected_at = CURRENT_TIMESTAMP WHERE id = 'cpl_edit'").update();
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(libraryPath).header("Authorization", passengerToken))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.totalCount").value(0));
+    }
+
+    @Test
+    void gameBalanceSharesResponsesAndAdvancesOnlyOnceForConcurrentRequests() throws Exception {
+        var fixture = gameDrive(-180, "PREPARING");
+        var create = gameCreate(fixture, "BALANCE");
+        String jobId = gameData(mvc.perform(create).andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.kind").value("GAME_GENERATION"))).path("id").asText();
+        mvc.perform(create).andExpect(status().isAccepted()).andExpect(jsonPath("$.data.id").value(jobId));
+        var job = awaitGame(fixture, jobId);
+        assertThat(job.status()).isEqualTo(JobResponse.Status.SUCCEEDED);
+        String path = "/api/v1/game-sessions/" + job.resourceId();
+        mvc.perform(get(path)).andExpect(status().isUnauthorized());
+        mvc.perform(get(path).header("Authorization", bearer(createLogoutUser(-182))))
+                .andExpect(status().isForbidden());
+
+        var session = gameData(mvc.perform(get(path).header("Authorization", fixture.passengerToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.questionCount").value(5)));
+        String question = session.path("currentQuestion").path("id").asText();
+        mvc.perform(gameProgress(path + "/next", fixture, fixture.driverToken(), 1))
+                .andExpect(status().isUnprocessableContent()).andExpect(jsonPath("$.error.code").value("ANSWER_REQUIRED"));
+        String reply = path + "/questions/" + question + "/responses/me";
+        mvc.perform(gameRequest(put(reply), fixture, fixture.passengerToken())
+                .content("""
+                        {"type":"BALANCE","choice":"A","authorUserId":"someone-else"}
+                        """))
+                .andExpect(status().isBadRequest());
+        mvc.perform(gameRequest(put(reply), fixture, fixture.passengerToken())
+                .content("""
+                        {"type":"BALANCE","choice":"A"}
+                        """))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.authorUserId").value(fixture.passenger()));
+        mvc.perform(get(path).header("Authorization", fixture.driverToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.responses[0].choice").value("A"))
+                .andExpect(jsonPath("$.data.version").value(1));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var driver = executor.submit(() -> mvc.perform(
+                    gameProgress(path + "/next", fixture, fixture.driverToken(), 1)).andReturn().getResponse().getStatus());
+            var passenger = executor.submit(() -> mvc.perform(
+                    gameProgress(path + "/next", fixture, fixture.passengerToken(), 1)).andReturn().getResponse().getStatus());
+            assertThat(java.util.List.of(driver.get(10, TimeUnit.SECONDS), passenger.get(10, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(200, 409);
+        }
+        mvc.perform(get(path).header("Authorization", fixture.driverToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.currentQuestion.number").value(2))
+                .andExpect(jsonPath("$.data.version").value(2));
+        mvc.perform(gameRequest(put(reply), fixture, fixture.passengerToken())
+                .content("""
+                        {"type":"BALANCE","choice":"B"}
+                        """))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("QUESTION_NOT_CURRENT"));
+    }
+
+    @Test
+    void gameNonsenseRevealsFieldsSeparatelyAndDriveEndAbandonsIt() throws Exception {
+        var fixture = gameDrive(-183, "ACTIVE");
+        String path = gamePath(fixture, "NONSENSE");
+        var session = gameData(mvc.perform(get(path).header("Authorization", fixture.driverToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.currentQuestion.hint").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.currentQuestion.answer").value(org.hamcrest.Matchers.nullValue())));
+        String question = path + "/questions/" + session.path("currentQuestion").path("id").asText();
+        mvc.perform(gameProgress(path + "/next", fixture, fixture.driverToken(), 1))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.error.code").value("ANSWER_NOT_REVEALED"));
+        var hint = gameRequest(post(question + "/hint"), fixture, fixture.passengerToken())
+                .header("Idempotency-Key", UUID.randomUUID().toString());
+        mvc.perform(hint).andExpect(status().isOk()).andExpect(jsonPath("$.data.hint").isString())
+                .andExpect(jsonPath("$.data.answer").value(org.hamcrest.Matchers.nullValue()));
+        mvc.perform(hint).andExpect(status().isOk()).andExpect(jsonPath("$.data.hintRevealed").value(true));
+        mvc.perform(gameRequest(post(question + "/answer"), fixture, fixture.driverToken())
+                .header("Idempotency-Key", UUID.randomUUID().toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.answer").isString());
+
+        endGameDrive(fixture);
+        mvc.perform(get(path).header("Authorization", fixture.passengerToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("ABANDONED"))
+                .andExpect(jsonPath("$.data.version").value(2));
+        mvc.perform(gameProgress(path + "/next", fixture, fixture.driverToken(), 2))
+                .andExpect(status().isConflict()).andExpect(jsonPath("$.error.code").value("GAME_ALREADY_FINISHED"));
+        mvc.perform(gameCreate(fixture, "NONSENSE")).andExpect(status().isConflict());
+    }
+
+    @Test
+    void gameMemoryRequiresCompletedHistoryAndCanFinishWithoutResponses() throws Exception {
+        var fixture = gameDrive(-185, "PREPARING");
+        String failedId = gameData(mvc.perform(gameCreate(fixture, "MEMORY")).andExpect(status().isAccepted()))
+                .path("id").asText();
+        var failed = awaitGame(fixture, failedId);
+        assertThat(failed.status()).isEqualTo(JobResponse.Status.FAILED);
+        assertThat(failed.error().code()).isEqualTo("MEMORY_RECORDS_REQUIRED");
+
+        jdbc.sql("""
+                INSERT INTO drives (id, couple_id, title, status, driver_user_id,
+                    passenger_user_id, recorder_user_id, control_version, ended_at)
+                SELECT 'drv_game_past', couple_id, 'Past drive', 'ENDED', driver_user_id,
+                    passenger_user_id, recorder_user_id, 2, CURRENT_TIMESTAMP
+                FROM drives WHERE id = :current
+                """).param("current", fixture.drive()).update();
+        String path = gamePath(fixture, "MEMORY");
+        var session = gameData(mvc.perform(get(path).header("Authorization", fixture.driverToken()))
+                .andExpect(status().isOk()));
+        assertThat(session.path("currentQuestion").path("prompt").asText()).contains("Past drive");
+        mvc.perform(gameProgress(path + "/complete", fixture, fixture.driverToken(), 1))
+                .andExpect(status().isUnprocessableContent()).andExpect(jsonPath("$.error.code").value("GAME_NOT_COMPLETABLE"));
+        for (int version = 1; version < 5; version++) {
+            mvc.perform(gameProgress(path + "/next", fixture, fixture.passengerToken(), version))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.data.currentQuestion.number").value(version + 1));
+        }
+        mvc.perform(gameProgress(path + "/next", fixture, fixture.driverToken(), 5))
+                .andExpect(status().isUnprocessableContent()).andExpect(jsonPath("$.error.code").value("LAST_QUESTION"));
+        var complete = gameProgress(path + "/complete", fixture, fixture.driverToken(), 5);
+        mvc.perform(complete).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.version").value(6)).andExpect(jsonPath("$.data.completedAt").isString());
+        mvc.perform(complete).andExpect(status().isOk()).andExpect(jsonPath("$.data.version").value(6));
+    }
+
+    @Test
+    void driveEndBeforeWorkerClaimPreventsQueuedGameFromActivating() throws Exception {
+        var fixture = gameDrive(-187, "ACTIVE");
+        // The scheduler cannot see the new queue entry before this transaction commits the drive end.
+        String jobId = transaction.execute(status -> {
+            try {
+                String id = gameData(mvc.perform(gameCreate(fixture, "BALANCE")).andExpect(status().isAccepted()))
+                        .path("id").asText();
+                endGameDrive(fixture);
+                return id;
+            } catch (Exception exception) {
+                throw new AssertionError(exception);
+            }
+        });
+        var job = awaitGame(fixture, jobId);
+        assertThat(job.status()).isEqualTo(JobResponse.Status.FAILED);
+        assertThat(job.error().code()).isEqualTo("DRIVE_STATE_CONFLICT");
+        assertThat(job.resourceId()).isNull();
+    }
+
+    private void endGameDrive(GameDrive fixture) throws Exception {
+        mvc.perform(gameRequest(post("/api/v1/drives/{drive}/end", fixture.drive()), fixture, fixture.driverToken())
+                .header("Idempotency-Key", UUID.randomUUID().toString())
+                .content("""
+                        {"expectedVersion":1,"reason":"USER_ENDED","lastRecordedSequence":0}
+                        """)).andExpect(status().isOk());
+    }
+
+    private GameDrive gameDrive(long kakao, String status) {
+        String driver = createLogoutUser(kakao);
+        String passenger = createLogoutUser(kakao - 1);
+        String couple = "cpl_" + UUID.randomUUID();
+        String drive = "drv_" + UUID.randomUUID();
+        jdbc.sql("""
+                INSERT INTO couples (id, first_member_id, second_member_id, start_date, mascot_name)
+                VALUES (:couple, :driver, :passenger, CURRENT_DATE, 'test')
+                """).param("couple", couple).param("driver", driver).param("passenger", passenger).update();
+        jdbc.sql("""
+                INSERT INTO drives (id, couple_id, title, status, active_slot, driver_user_id,
+                    passenger_user_id, recorder_user_id, control_version, started_at, state_changed_at)
+                VALUES (:drive, :couple, 'Current drive', :status, 1, :driver, :passenger, :driver, 1,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """).param("drive", drive).param("couple", couple).param("status", status)
+                .param("driver", driver).param("passenger", passenger).update();
+        return new GameDrive(couple, drive, driver, passenger, bearer(driver), bearer(passenger));
+    }
+
+    private String bearer(String user) {
+        return "Bearer " + tokens.access(user, "session", Instant.now());
+    }
+
+    private MockHttpServletRequestBuilder gameCreate(GameDrive fixture, String type) {
+        return gameRequest(post("/api/v1/game-sessions"), fixture, fixture.driverToken())
+                .header("Idempotency-Key", UUID.randomUUID().toString())
+                .content("""
+                        {"driveId":"%s","type":"%s"}
+                        """.formatted(fixture.drive(), type));
+    }
+
+    private MockHttpServletRequestBuilder gameProgress(String path, GameDrive fixture, String bearer, int version) {
+        return gameRequest(post(path), fixture, bearer)
+                .header("Idempotency-Key", UUID.randomUUID().toString())
+                .content("""
+                        {"expectedVersion":%d}
+                        """.formatted(version));
+    }
+
+    private MockHttpServletRequestBuilder gameRequest(MockHttpServletRequestBuilder request, GameDrive fixture,
+            String bearer) {
+        return request.header("Authorization", bearer).header("X-Couple-Id", fixture.couple())
+                .contentType(MediaType.APPLICATION_JSON);
+    }
+
+    private JsonNode gameData(ResultActions result) throws Exception {
+        return json.readTree(result.andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8))
+                .path("data");
+    }
+
+    private String gamePath(GameDrive fixture, String type) throws Exception {
+        String jobId = gameData(mvc.perform(gameCreate(fixture, type)).andExpect(status().isAccepted())).path("id").asText();
+        var job = awaitGame(fixture, jobId);
+        assertThat(job.status()).isEqualTo(JobResponse.Status.SUCCEEDED);
+        return "/api/v1/game-sessions/" + job.resourceId();
+    }
+
+    private JobResponse awaitGame(GameDrive fixture, String id) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        JobResponse job = jobs.get(fixture.driver(), id);
+        while ((job.status() == JobResponse.Status.QUEUED || job.status() == JobResponse.Status.RUNNING)
+                && System.nanoTime() < deadline) {
+            Thread.sleep(50);
+            job = jobs.get(fixture.driver(), id);
+        }
+        return job;
+    }
+
+    private record GameDrive(String couple, String drive, String driver, String passenger,
+            String driverToken, String passengerToken) {
     }
 
     private String createLogoutUser(long kakaoId) {
