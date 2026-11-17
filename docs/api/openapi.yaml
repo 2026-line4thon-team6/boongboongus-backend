@@ -6152,6 +6152,57 @@ paths:
         - 325:8500
         kind: FEATURE
       x-policy-status: USER_CONFIRMED
+  /cards/{cardId}/discard:
+    post:
+      operationId: discardCard
+      tags:
+      - 카드·기록
+      summary: 작성하지 않은 카드 폐기
+      description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
+
+
+        두 멤버 모두 사진·소감을 남기지 않은 UNWRITTEN 카드를 마감 전에 폐기한다. 성공하면 두 멤버의 미작성 카드 목록(GET /home pendingCards)과 카드 작성 화면에서
+        즉시 빠지고, 해당 드라이브의 카드 조회는 404로 응답한다. 저장 전 카드라 기록·지도·캘린더·누적 거리에는 원래 반영되지 않는다.
+        한 멤버라도 작성을 시작한 DRAFT 카드는 상대의 작성 내용을 지우지 않도록 409 CARD_DRAFT_STARTED로 거절한다. 저장한(COMPLETED) 카드는 422 CARD_ALREADY_COMPLETED로
+        거절하며 deleteCard로 삭제한다. 마감이 지난 카드는 410 CARD_EDIT_WINDOW_CLOSED.
+        저장한 카드 삭제와 같이 접수된 대기 스탬프를 수신한 GPS로 마지막 검증한 뒤(누적 스탬프 유지) 해당 주행의 개별 GPS 좌표를 삭제하고 추가 GPS 수신을 닫는다.
+        같은 Idempotency-Key 재요청은 같은 결과(204)를 돌려준다. 이미 폐기된 카드에 새 요청을 보내면 404.'
+      parameters:
+      - $ref: '#/components/parameters/CardIdPath'
+      - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      - $ref: '#/components/parameters/XCoupleIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VersionRequest'
+            example:
+              expectedVersion: 1
+      responses:
+        '204':
+          description: 처리 성공. 응답 본문 없음.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden2'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict2'
+        '410':
+          $ref: '#/components/responses/Gone2'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+      x-contract-status: PROPOSED
+      x-rollout-gated: false
+      x-access-scope: COUPLE
   /records:
     get:
       operationId: getRecords
