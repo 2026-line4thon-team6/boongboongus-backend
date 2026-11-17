@@ -15,6 +15,7 @@ import com.boongboongus.backend.domain.auth.repository.AuthSessionRepository;
 import com.boongboongus.backend.domain.job.dto.JobResponse;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -63,6 +64,7 @@ class AuthTokenIntegrationTest {
     @Autowired private JsonMapper json;
     @Autowired private ServiceTokens tokens;
     @Autowired private TransactionTemplate transaction;
+    @Autowired private AccountCleanupService accountCleanup;
     @Autowired private com.boongboongus.backend.domain.job.service.JobService jobs;
     @MockitoBean private KakaoLoginClient kakao;
 
@@ -1041,6 +1043,80 @@ class AuthTokenIntegrationTest {
                 .content("""
                         {"expectedVersion":1,"reason":"USER_ENDED","lastRecordedSequence":0}
                         """)).andExpect(status().isOk());
+    }
+
+    @Test
+    void accountCleanupDisablesAccessAndKeepsPartnersOriginals() throws Exception {
+        var fixture = gameDrive(-1901, "ACTIVE");
+        endGameDrive(fixture);
+        String otherDrive = "drv_" + UUID.randomUUID();
+        jdbc.sql("""
+                INSERT INTO drives (id, couple_id, title, status, driver_user_id, passenger_user_id,
+                    recorder_user_id, control_version, ended_at)
+                VALUES (:id, :couple, 'Partner drive', 'ENDED', :user, :partner, :partner, 1, CURRENT_TIMESTAMP)
+                """).param("id", otherDrive).param("couple", fixture.couple())
+                .param("user", fixture.driver()).param("partner", fixture.passenger()).update();
+
+        createLogoutSession(fixture.driver(), java.time.OffsetDateTime.now().plusDays(1));
+        createLogoutSession(fixture.driver(), java.time.OffsetDateTime.now().plusDays(1));
+        createPushRegistration(fixture.driver());
+        createPushRegistration(fixture.passenger());
+        String card = jdbc.sql("SELECT id FROM drive_cards WHERE drive_id = :drive")
+                .param("drive", fixture.drive()).query(String.class).single();
+        for (String author : List.of(fixture.driver(), fixture.passenger())) {
+            jdbc.sql("""
+                    INSERT INTO card_reflections (card_id, author_id, body, updated_at, version)
+                    VALUES (:card, :author, 'reflection', CURRENT_TIMESTAMP, 1)
+                    """).param("card", card).param("author", author).update();
+            jdbc.sql("INSERT INTO card_photo_upload_owners (user_id) VALUES (:author)").param("author", author).update();
+            jdbc.sql("""
+                    INSERT INTO card_photo_uploads (id, user_id, couple_id, storage_path, status,
+                        declared_type, declared_bytes, created_at, expires_at)
+                    VALUES (:author, :author, :couple, :author, 'UPLOADING',
+                        'image/png', 1, CURRENT_TIMESTAMP, :expiry)
+                    """).param("author", author).param("couple", fixture.couple())
+                    .param("expiry", java.time.OffsetDateTime.now().plusDays(1)).update();
+        }
+        for (String drive : List.of(fixture.drive(), otherDrive)) {
+            jdbc.sql("""
+                    INSERT INTO drive_gps_samples (drive_id, sequence, recorded_at, latitude, longitude)
+                    VALUES (:id, 1, CURRENT_TIMESTAMP, 37, 127)
+                    """).param("id", drive).update();
+        }
+
+        accountCleanup.deactivateAndClean(fixture.driver());
+        accountCleanup.deactivateAndClean(fixture.driver());
+
+        mvc.perform(get("/api/v1/me").header("Authorization", fixture.driverToken()))
+                .andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/v1/couples/me").header("Authorization", fixture.passengerToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.connectionStatus").value("DISCONNECTED"));
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM auth_service_sessions WHERE user_id = :id AND revoked_at IS NOT NULL
+                """).param("id", fixture.driver()).query(Long.class).single()).isEqualTo(2L);
+        assertThat(jdbc.sql("""
+                SELECT user_id FROM device_push_tokens WHERE user_id IN (:users)
+                """).param("users", List.of(fixture.driver(), fixture.passenger())).query(String.class).list())
+                .containsExactly(fixture.passenger());
+        assertThat(jdbc.sql("SELECT author_id FROM card_reflections WHERE card_id = :id")
+                .param("id", card).query(String.class).list()).containsExactly(fixture.passenger());
+        assertThat(jdbc.sql("SELECT drive_id FROM drive_gps_samples WHERE drive_id IN (:drives)")
+                .param("drives", List.of(fixture.drive(), otherDrive)).query(String.class).list())
+                .containsExactly(otherDrive);
+        assertThat(jdbc.sql("SELECT id FROM card_photo_uploads WHERE id IN (:users) AND status = 'UPLOADING'")
+                .param("users", List.of(fixture.driver(), fixture.passenger())).query(String.class).list())
+                .containsExactly(fixture.passenger());
+        assertThat(jdbc.sql("SELECT cleanup_pending FROM card_photo_uploads WHERE id = :id AND status = 'DELETED'")
+                .param("id", fixture.driver()).query(Boolean.class).single()).isTrue();
+    }
+
+    @Test
+    void accountCleanupRejectsAnActiveDrive() throws Exception {
+        var fixture = gameDrive(-1903, "ACTIVE");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> accountCleanup.deactivateAndClean(fixture.driver()))
+                .isInstanceOfSatisfying(TokenExchangeException.class,
+                        error -> assertThat(error.code()).isEqualTo("ACTIVE_DRIVE_EXISTS"));
+        mvc.perform(get("/api/v1/me").header("Authorization", fixture.driverToken())).andExpect(status().isOk());
     }
 
     private GameDrive gameDrive(long kakao, String status) {

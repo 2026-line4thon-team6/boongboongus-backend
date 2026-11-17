@@ -82,7 +82,9 @@ FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `an
 
 ### 회원 탈퇴 연동 상태
 
-`DELETE /api/v1/me`는 Bearer 액세스 토큰과 `X-Reauth-Token`으로 본인 증명을 확인합니다. 준비·진행·일시중단 주행이 있으면 `409 ACTIVE_DRIVE_EXISTS`입니다. 현재는 조건을 통과해도 `503 SERVICE_UNAVAILABLE`을 반환합니다. 카카오 및 연결된 공급자 해제, 주행 시작과의 동시 처리, 커플·개인 데이터 정리, 탈퇴 계정의 JWT 차단이 연결된 뒤에만 탈퇴를 완료합니다.
+`DELETE /api/v1/me`는 Bearer 액세스 토큰과 `X-Reauth-Token`으로 본인 증명을 확인합니다. 준비·진행·일시중단 주행이 있으면 `409 ACTIVE_DRIVE_EXISTS`입니다. 현재는 조건을 통과해도 `503 SERVICE_UNAVAILABLE`을 반환합니다.
+
+내부 정리 서비스는 계정 비활성화, 세션 및 푸시 무효화, 커플 해제와 개인 데이터 정리를 한 트랜잭션에서 수행합니다. 업로드 파일은 접근 차단 뒤 기존 미디어 작업에서 정리하며, 개인 콘텐츠와 GPS 좌표는 소유자 및 기록자 기준으로 정리합니다. 공급자 해제와 증명 소비를 포함한 탈퇴 API 연결은 후속 단계입니다.
 
 ### 현재 커플 조회
 
