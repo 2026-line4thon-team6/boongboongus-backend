@@ -20,4 +20,8 @@ record DriveView(
     @JsonInclude(JsonInclude.Include.ALWAYS)
     record Current(DriveView drive) {
     }
+
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    record Eta(String routeId, Instant estimatedArrivalAt) {
+    }
 }

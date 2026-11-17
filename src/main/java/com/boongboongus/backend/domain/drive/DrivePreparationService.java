@@ -32,6 +32,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class DrivePreparationService {
     private static final Duration REPLAY_WINDOW = Duration.ofHours(24);
     private static final Duration LATE_GPS_WINDOW = Duration.ofMinutes(15);
+    private static final Duration ETA_REFRESH_INTERVAL = Duration.ofMinutes(1);
+    private static final Duration ETA_MAX_GPS_AGE = Duration.ofSeconds(90);
     private static final String DEFAULT_TITLE = "우리의 드라이브";
 
     private final DrivePreparationStore store;
@@ -109,6 +111,33 @@ public class DrivePreparationService {
     DriveView get(Principal principal, String driveId) {
         Actor actor = currentActor(principal);
         return findDrive(actor.couple().id(), driveId).view();
+    }
+
+    DriveView.Eta eta(Principal principal, String driveId) {
+        Actor actor = currentActor(principal);
+        String coupleId = actor.couple().id();
+        DriveRow drive = findDrive(coupleId, driveId);
+        if (!"ACTIVE".equals(drive.status()) || drive.routeId() == null || drive.destination() == null
+                || drive.stateChangedAt() == null) {
+            return new DriveView.Eta(drive.routeId(), drive.visibleEta());
+        }
+        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        var sample = store.latestVerifiedSample(driveId)
+                .filter(gps -> !gps.recordedAt().isBefore(drive.stateChangedAt())
+                        && !gps.recordedAt().isBefore(now.minus(ETA_MAX_GPS_AGE)));
+        var lookup = routes.getIfAvailable();
+        if (sample.isPresent() && lookup != null && store.claimEtaRefresh(
+                drive, now, now.minus(ETA_REFRESH_INTERVAL), sample.get().recordedAt())) {
+            var origin = new DriveRouteLookup.Place(null, null, null, sample.get().coordinate());
+            try {
+                int remainingSeconds = lookup.estimateDuration(origin, drive.destination());
+                store.saveEta(drive, now, Instant.now().plusSeconds(remainingSeconds));
+            } catch (DriveRouteLookup.LiveRouteUnavailable ignored) {
+                // A provider failure leaves the last ETA and the current refresh cooldown in place.
+            }
+        }
+        DriveRow current = findDrive(coupleId, driveId);
+        return new DriveView.Eta(current.routeId(), current.visibleEta());
     }
 
     DriveView update(Principal principal, String coupleId, String driveId, DriveControlRequest.Patch request) {
@@ -377,7 +406,7 @@ public class DrivePreparationService {
             if (origin == null || lookup == null) {
                 throw new DriveRouteLookup.LiveRouteUnavailable();
             }
-            return Math.max(1, lookup.estimatePlaylistDuration(origin, drive.destination()));
+            return Math.max(1, lookup.estimateDuration(origin, drive.destination()));
         } catch (DriveRouteLookup.LiveRouteUnavailable exception) {
             throw new org.springframework.web.server.ResponseStatusException(
                     org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "주행 예상 시간을 확인할 수 없습니다.", exception);

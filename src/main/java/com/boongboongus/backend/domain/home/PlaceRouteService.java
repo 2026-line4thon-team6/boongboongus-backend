@@ -86,7 +86,7 @@ class PlaceRouteService implements DriveRouteLookup {
     }
 
     @Override
-    public int estimatePlaylistDuration(Place origin, Place destination) {
+    public int estimateDuration(Place origin, Place destination) {
         try {
             return kakao.find(new Input(origin, destination, List.of(), Preference.RECOMMENDED)).durationSeconds();
         } catch (HomeExploreException exception) {
