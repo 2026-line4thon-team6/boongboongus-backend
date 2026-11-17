@@ -1,6 +1,7 @@
 package com.boongboongus.backend.domain.home;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -11,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.boongboongus.backend.domain.drive.CurrentCoupleLookup;
 import com.boongboongus.backend.domain.home.PlaceCatalog.Category;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Executors;
@@ -25,8 +27,10 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(properties = "app.places.share-base-url=https://share.example.test")
 @AutoConfigureMockMvc
@@ -43,14 +47,23 @@ class PlaceSharingIntegrationTest {
 
     @Autowired MockMvc mvc;
     @Autowired AtomicInteger deliveries;
-    @Autowired HardcodedPlaceCatalog catalog;
+    @Autowired PlaceCatalog catalog;
+    @Autowired JdbcClient jdbc;
 
     @ParameterizedTest
     @EnumSource(Category.class)
     void recommendedPlacesCanBeOpenedFavoritedAndShared(Category category) throws Exception {
         String user = UUID.randomUUID().toString();
+        var expectedIds = switch (category) {
+            case SEA -> List.of("plc_eurwangni", "plc_heonhwaro", "plc_oido");
+            case NIGHT_VIEW -> List.of("plc_banpo", "plc_namsan", "plc_songdo");
+            case NEARBY_CAFE -> List.of("plc_bukhangang_cafe", "plc_heyri", "plc_seojong_cafe");
+            case NATURE -> List.of("plc_cheongpyeong", "plc_dumulmeori", "plc_sanjeong_lake");
+            case CAR_CAMPING -> List.of("plc_baengnoju", "plc_jaraseom", "plc_mongsanpo");
+        };
         mvc.perform(get(API + "/places/recommendations").param("category", category.name()).principal(() -> user))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(3));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[*].id", contains(expectedIds.toArray(String[]::new))));
 
         var places = catalog.findRecommendationsByCategory(category);
         for (var place : places) {
@@ -69,6 +82,24 @@ class PlaceSharingIntegrationTest {
         }
         mvc.perform(get(FAVORITES).param("category", category.name()).principal(() -> user))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(3));
+    }
+
+    @Test
+    @Transactional
+    void destinationFeedsReflectDatabaseOrderWithoutReloadingTheApp() throws Exception {
+        mvc.perform(get(API + "/routes/popular").principal(() -> OWNER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items").isEmpty())
+                .andExpect(jsonPath("$.data.hasMore").value(false))
+                .andExpect(jsonPath("$.data.nextCursor").value((Object) null));
+
+        jdbc.sql("UPDATE places SET recommendation_order = 4 WHERE id = 'plc_eurwangni'").update();
+        jdbc.sql("UPDATE places SET recommendation_order = 1, popular_order = 1 WHERE id = 'plc_oido'").update();
+        mvc.perform(get(API + "/places/recommendations").param("category", "SEA").principal(() -> OWNER))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[*].id", contains("plc_oido", "plc_heonhwaro", "plc_eurwangni")));
+        mvc.perform(get(API + "/routes/popular").principal(() -> OWNER))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[*].id", contains("plc_oido")));
     }
 
     @Test

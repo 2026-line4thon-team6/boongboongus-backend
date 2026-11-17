@@ -44,6 +44,15 @@ public class AccountRepository {
                 """).param("id", id).param("type", type).param("version", version).update();
     }
 
+    public boolean hasConsent(String id, String type, String version) {
+        return jdbc.sql("""
+                SELECT EXISTS (
+                    SELECT 1 FROM auth_user_consents
+                    WHERE user_id = :id AND document_type = :type AND document_version = :version
+                )
+                """).param("id", id).param("type", type).param("version", version).query(Boolean.class).single();
+    }
+
     public void updateNickname(String id, String nickname) {
         jdbc.sql("UPDATE auth_users SET nickname = :nickname WHERE id = :id")
                 .param("id", id).param("nickname", nickname).update();

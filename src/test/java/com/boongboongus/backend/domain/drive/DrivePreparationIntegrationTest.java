@@ -7,6 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.boongboongus.backend.domain.auth.repository.AccountRepository;
 import com.boongboongus.backend.domain.drive.CurrentCoupleLookup.Couple;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
@@ -20,6 +21,7 @@ import java.util.UUID;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,7 +38,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import tools.jackson.databind.json.JsonMapper;
 
-@SpringBootTest
+@SpringBootTest(properties = "spring.config.import=classpath:legal-documents-test.yml")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import(DrivePreparationIntegrationTest.Fixtures.class)
@@ -51,7 +53,17 @@ class DrivePreparationIntegrationTest {
     private JdbcClient jdbc;
 
     @Autowired
+    private AccountRepository accounts;
+
+    @Autowired
     private JsonMapper json;
+
+    @BeforeEach
+    void storeRecorderConsent() {
+        String recorder = couple + "_b";
+        createUser(recorder);
+        accounts.saveConsent(recorder, "PRIVACY", "v1");
+    }
 
     @Test
     void createsRestoresCancelsAndFreesTheActiveSlot() throws Exception {
@@ -303,15 +315,35 @@ class DrivePreparationIntegrationTest {
     }
 
     @Test
-    void rejectsStartWithoutRecordedLocationConsent() throws Exception {
+    void requiresTheRecorderToHaveAgreedToTheLocationPrivacyVersion() throws Exception {
         String noConsentCouple = "test_couple_no_consent_" + UUID.randomUUID();
         String recorder = noConsentCouple + "_b";
+        String partner = noConsentCouple + "_a";
+        createUser(recorder);
+        createUser(partner);
+        accounts.saveConsent(partner, "PRIVACY", "v1");
+        accounts.saveConsent(recorder, "TERMS", "v1");
+        accounts.saveConsent(recorder, "PRIVACY", "v0");
         String id = driveId(mvc.perform(prepare(recorder, noConsentCouple, key(),
                 roles(noConsentCouple).replace("{", "{\"routeId\":\"fixture_route\",")))
                 .andExpect(status().isCreated()));
-        mvc.perform(control(recorder, id, "start", key(), startBody(1)))
+        String startKey = key();
+        mvc.perform(control(recorder, id, "start", startKey, startBody(1)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.message").value("주행을 시작하려면 위치 정보 동의가 필요합니다."));
+        current(recorder).andExpect(jsonPath("$.data.drive.status").value("PREPARING"));
+
+        accounts.saveConsent(recorder, "PRIVACY", "v1");
+        mvc.perform(control(recorder, id, "start", startKey, startBody(1)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+    }
+
+    private void createUser(String userId) {
+        jdbc.sql("""
+                INSERT INTO auth_users (id, kakao_id, nickname, onboarding_completed)
+                VALUES (:id, :kakaoId, '테스트', TRUE)
+                """).param("id", userId).param("kakaoId", UUID.randomUUID().getMostSignificantBits()).update();
     }
 
     @Test
@@ -542,11 +574,6 @@ class DrivePreparationIntegrationTest {
                 String id = userId.substring(0, userId.length() - 2);
                 return Optional.of(new Couple(id, id + "_a", id + "_b"));
             };
-        }
-
-        @Bean
-        DriveLocationConsentLookup driveLocationConsentLookup() {
-            return userId -> !userId.startsWith("test_couple_no_consent_");
         }
 
         @Bean

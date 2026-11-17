@@ -141,14 +141,15 @@ class HomeExploreIntegrationTest {
     JsonMapper json;
 
     @Autowired
-    HardcodedPlaceCatalog hardcodedCatalog;
+    JdbcPlaceCatalog jdbcCatalog;
 
     @Test
-    void hardcodedCatalogResolvesTheSamePlaceByCategoryAndIdAndPublishesItAsPopular() {
-        var place = hardcodedCatalog.findByCategory(Category.NATURE).getFirst();
-        assertThat(hardcodedCatalog.findById(place.id())).contains(place);
-        assertThat(hardcodedCatalog.findById("unknown")).isEmpty();
-        assertThat(hardcodedCatalog.findPopularDestinations()).containsExactly(place);
+    void databaseCatalogRetainsSeoulForestWithoutListingItAsPopular() {
+        var place = jdbcCatalog.findById("plc_seoul_forest").orElseThrow();
+        assertThat(jdbcCatalog.findByCategory(Category.NATURE)).contains(place);
+        assertThat(jdbcCatalog.findRecommendationsByCategory(Category.NATURE)).doesNotContain(place);
+        assertThat(jdbcCatalog.findById("unknown")).isEmpty();
+        assertThat(jdbcCatalog.findPopularDestinations()).isEmpty();
     }
 
     @Test

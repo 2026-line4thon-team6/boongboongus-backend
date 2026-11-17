@@ -68,6 +68,8 @@ FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `an
 
 `PUT /api/v1/me/onboarding`은 Bearer 액세스 토큰, `nickname`, `birthDate`(미수집 시 null), `consents`를 받습니다. `GET /api/v1/legal-documents`와 같은 문서 설정에서 현재 `TERMS`·`PRIVACY` 버전을 확인합니다. 승인된 두 문서를 `src/main/resources/legal-documents.yml`에 등록해야 가입을 완료할 수 있습니다. 동의 이력과 가입 프로필은 함께 저장됩니다.
 
+주행 시작은 기록 사용자의 `PRIVACY v1` 동의 이력을 조회합니다. 이 버전의 제3조에는 주행 기록을 위한 위치정보 처리 범위가 명시되어 있습니다. 배포 환경의 약관 설정에 해당 버전을 보관합니다. 위치정보 처리 문안을 변경할 때는 새 버전을 주행 동의에 적용할지와 기존 사용자 재동의 기준을 함께 검토합니다.
+
 `PATCH /api/v1/me`는 `nickname`과 `birthDate` 중 전달한 필드만 바꿉니다. `birthDate: null`은 생년월일을 지우고, 빈 요청과 미래 생년월일은 거절합니다. 두 API 모두 갱신된 내 프로필을 반환합니다.
 
 ### 탈퇴용 카카오 본인 재인증
