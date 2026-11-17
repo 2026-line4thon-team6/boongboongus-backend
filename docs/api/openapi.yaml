@@ -4580,14 +4580,19 @@ paths:
       operationId: getDriveRestAreas
       tags:
       - 휴게소·스탬프
-      summary: 현재 경로 위 휴게소
+      summary: 현재 경로 주변 휴게소
       description: '**상태:** 설계 초안 · **접근:** 현재 커플 연결 필수
 
 
         같은 실시간 경로 계산 결과에서 routeId·polyline·휴게소 items를 함께 반환한다. 경로 없는 주행은 routeId=null, polyline=null, items=[].
-        경로가 휴게소의 등록된 진입 지점을 해당 진행 방향으로 지나는 경우에 표시한다. 진입 정보가 여러 건인 휴게소는 앞으로 남은 진입 지점 중 가장 가까운 지점을 기준으로 한 번만 반환한다.
-        distanceAlongRouteMeters는 현재 검증 GPS 기준 경로상 남은 거리이며 GPS가 없으면 출발점 기준이다. 경로에서 벗어나 위치를 판정할 수 없으면 null이다.
-        접근 알림은 GPS 업로드 응답의 restAreaAlerts로 전달한다. 다음 페이지를 불러오는 동안 경로가 변경되면 첫 페이지를 다시 조회한다.
+        목적지가 강릉 헌화로(plc_heonhwaro) 또는 대천해수욕장(plc_daecheon)이면 등록된 진입 지점과 노선·진행 방향이 맞는 휴게소를 표시한다.
+        외부 검색 목적지도 두 장소의 카탈로그 좌표로부터 500m 이내이면 같은 기준을 적용한다.
+        그 외 목적지는 DB 카탈로그에서 경로선 1km 이내의 휴게소를 진입 정보·노선·진행 방향과 관계없이 표시하며 반대편 시설도 포함될 수 있다.
+        현재 검증 GPS보다 앞에 남은 지점만 경로 순서로 정렬하고 같은 휴게소 ID는 한 번만 반환한다.
+        distanceAlongRouteMeters는 시연 목적지에서는 진입 지점, 그 외에는 시설 좌표를 경로선에 투영한 지점까지의 경로상 남은 거리다.
+        GPS가 없으면 출발점 기준이며 경로에서 벗어나 위치를 판정할 수 없으면 null이다.
+        접근 알림은 목적지와 관계없이 등록된 진입 지점과 노선·진행 방향을 검증하고 GPS 업로드 응답의 restAreaAlerts로 전달한다.
+        다음 페이지를 불러오는 동안 경로가 변경되면 첫 페이지를 다시 조회한다.
 
 
         **근거:** ON p5-7 · [Figma 289:29041](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-29041),

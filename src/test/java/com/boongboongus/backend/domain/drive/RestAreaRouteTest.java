@@ -12,6 +12,24 @@ import org.junit.jupiter.api.Test;
 
 class RestAreaRouteTest {
     @Test
+    void nearbyIncludesBothSidesWithoutEntrancesAndClampsAtRouteEndpoints() {
+        var route = new RestAreaRoute(new LiveRoute("route", "", List.of(
+                new Road("테스트고속도로", List.of(new Coordinate(37, 127), new Coordinate(37.05, 127))))));
+        var ahead = new Area("ahead", "진입점 미등록", "다른선", "남쪽",
+                new Coordinate(37.03, 127.005), null, null);
+        var opposite = new Area("opposite", "반대편", "테스트선", "남쪽",
+                new Coordinate(37.02, 126.999), null, null);
+        var endpoint = new Area("endpoint", "출발점 주변", "다른선", "",
+                new Coordinate(36.999, 127), null, null);
+        var distant = new Area("distant", "멀리 있는 시설", "테스트선", "",
+                new Coordinate(37.02, 127.02), null, null);
+
+        assertThat(route.nearby(List.of(ahead, distant, opposite, endpoint)))
+                .extracting(match -> match.area().id()).containsExactly("endpoint", "opposite", "ahead");
+        assertThat(new RestAreaRoute(new LiveRoute("route", "", List.of())).nearby(List.of(ahead))).isEmpty();
+    }
+
+    @Test
     void rejectsOppositeParallelAndCrossingSegmentsAtAnEntrance() {
         var entrance = new Coordinate(37.02, 127);
         var area = new Area("rest_fixture", "휴게소", "테스트선", "상행", entrance, null, null);
