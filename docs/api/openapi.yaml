@@ -7837,6 +7837,7 @@ paths:
                     optionB: 야경 보기
                     hint: null
                     answer: null
+                    answerLength: null
                     hintRevealed: false
                     answerRevealed: false
                   responses: []
@@ -7914,6 +7915,7 @@ paths:
                   optionB: null
                   hint: ㅆㄹㅎ
                   answer: null
+                  answerLength: 3
                   hintRevealed: true
                   answerRevealed: false
                 meta:
@@ -7988,6 +7990,7 @@ paths:
                   optionB: null
                   hint: null
                   answer: 썰렁해
+                  answerLength: 3
                   hintRevealed: false
                   answerRevealed: true
                 meta:
@@ -8177,6 +8180,7 @@ paths:
                     optionB: 야경 보기
                     hint: null
                     answer: null
+                    answerLength: null
                     hintRevealed: false
                     answerRevealed: false
                   responses: []
@@ -8285,6 +8289,7 @@ paths:
                     optionB: 야경 보기
                     hint: null
                     answer: null
+                    answerLength: null
                     hintRevealed: false
                     answerRevealed: false
                   responses:
@@ -8393,6 +8398,7 @@ paths:
                     optionB: 야경 보기
                     hint: null
                     answer: null
+                    answerLength: null
                     hintRevealed: false
                     answerRevealed: false
                   responses: []
@@ -12485,6 +12491,12 @@ components:
           - 'null'
           example: 바다
           description: ''
+        answerLength:
+          type:
+          - integer
+          - 'null'
+          description: 넌센스 정답의 일반 공백을 제외한 글자 수. 정답 공개 전에도 제공하며 밸런스 및 추억 문항은 null.
+          example: 3
         hintRevealed:
           type: boolean
           example: false
@@ -12501,6 +12513,7 @@ components:
       - optionB
       - hint
       - answer
+      - answerLength
       - hintRevealed
       - answerRevealed
       additionalProperties: false
