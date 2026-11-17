@@ -11,6 +11,7 @@ import java.util.Optional;
 
 final class RestAreaRoute {
     private static final int MAX_GPS_OFFSET_METERS = 150;
+    private static final int MAX_NEARBY_OFFSET_METERS = 1000;
     private static final int MAX_DIRECTION_ERROR = 60;
     private static final double METERS_PER_DEGREE = 111_195;
 
@@ -41,6 +42,16 @@ final class RestAreaRoute {
 
     List<Match> matches(List<Access> accesses) {
         return accesses.stream().flatMap(access -> match(access).stream())
+                .sorted(Comparator.comparingDouble(Match::meters).thenComparing(match -> match.area().id()))
+                .toList();
+    }
+
+    List<Match> nearby(List<Area> areas) {
+        return areas.stream().flatMap(area -> segments.stream()
+                        .map(segment -> segment.project(area.coordinate()))
+                        .filter(projection -> projection.offsetMeters() <= MAX_NEARBY_OFFSET_METERS)
+                        .min(Comparator.comparingDouble(Projection::offsetMeters))
+                        .map(projection -> new Match(area, projection.meters())).stream())
                 .sorted(Comparator.comparingDouble(Match::meters).thenComparing(match -> match.area().id()))
                 .toList();
     }
