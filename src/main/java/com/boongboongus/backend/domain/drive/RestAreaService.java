@@ -3,9 +3,11 @@ package com.boongboongus.backend.domain.drive;
 import com.boongboongus.backend.domain.drive.DrivePreparationStore.DriveRow;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.LiveRoute;
+import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
 import com.boongboongus.backend.domain.drive.RestAreaCatalog.Area;
 import com.boongboongus.backend.domain.drive.RestAreaCatalog.Menu;
 import com.boongboongus.backend.domain.drive.RestAreaCatalog.Summary;
+import com.boongboongus.backend.domain.home.PlaceCatalog;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -14,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.NavigableMap;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
@@ -23,14 +26,18 @@ import org.springframework.stereotype.Service;
 @Service
 class RestAreaService {
     private static final int APPROACH_METERS = 2000;
+    private static final int DEMO_DESTINATION_RADIUS_METERS = 500;
+    private static final Set<String> DIRECTION_MATCHED_DESTINATIONS = Set.of("plc_heonhwaro", "plc_daecheon");
     private final RestAreaCatalog catalog;
+    private final PlaceCatalog places;
     private final DrivePreparationStore drives;
     private final ObjectProvider<DriveRouteLookup> routes;
     private final JdbcClient jdbc;
 
-    RestAreaService(RestAreaCatalog catalog, DrivePreparationStore drives,
+    RestAreaService(RestAreaCatalog catalog, PlaceCatalog places, DrivePreparationStore drives,
             ObjectProvider<DriveRouteLookup> routes, JdbcClient jdbc) {
         this.catalog = catalog;
+        this.places = places;
         this.drives = drives;
         this.routes = routes;
         this.jdbc = jdbc;
@@ -75,7 +82,9 @@ class RestAreaService {
                 : route.position(gps).map(RestAreaRoute.Projection::meters).orElse(null);
         var earned = catalog.earned(coupleId);
         var seen = new HashSet<String>();
-        var items = route.matches(catalog.accesses()).stream()
+        var matches = requiresDirectionMatch(drive.destination())
+                ? route.matches(catalog.accesses()) : route.nearby(catalog.all());
+        var items = matches.stream()
                 .filter(match -> progress == null || match.meters() >= progress)
                 .filter(match -> seen.add(match.area().id()))
                 .map(match -> match.area().summary(progress == null ? null : match.meters() - progress,
@@ -83,6 +92,19 @@ class RestAreaService {
                 .toList();
         var page = RestAreaPage.slice(items, cursor, limit, "drive-" + driveId + "-" + live.polyline().hashCode());
         return new RouteAreas(live.routeId(), live.polyline(), page.items(), page.nextCursor(), page.hasMore());
+    }
+
+    private boolean requiresDirectionMatch(Place destination) {
+        if (destination == null) {
+            return false;
+        }
+        if (destination.placeId() != null && DIRECTION_MATCHED_DESTINATIONS.contains(destination.placeId())) {
+            return true;
+        }
+        return destination.coordinate() != null && DIRECTION_MATCHED_DESTINATIONS.stream()
+                .map(places::findById).flatMap(java.util.Optional::stream)
+                .anyMatch(place -> DriveGps.meters(destination.coordinate(), place.coordinate())
+                        <= DEMO_DESTINATION_RADIUS_METERS);
     }
 
     List<Alert> approachAlerts(DriveRow drive, Coordinate gps, Instant now) {
