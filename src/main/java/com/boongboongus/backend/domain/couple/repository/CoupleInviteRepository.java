@@ -18,7 +18,7 @@ public class CoupleInviteRepository {
     }
 
     public boolean lockOwner(String userId) {
-        return jdbc.sql("SELECT id FROM auth_users WHERE id = :id FOR UPDATE")
+        return jdbc.sql("SELECT id FROM auth_users WHERE id = :id AND deleted_at IS NULL FOR UPDATE")
                 .param("id", userId).query(String.class).optional().isPresent();
     }
 

@@ -2,6 +2,7 @@ package com.boongboongus.backend.domain.device.repository;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 public class DevicePushTokenRepository {
@@ -11,7 +12,12 @@ public class DevicePushTokenRepository {
         this.jdbc = jdbc;
     }
 
+    @Transactional
     public boolean register(String deviceId, String userId, String token, String platform, boolean enabled) {
+        if (jdbc.sql("SELECT id FROM auth_users WHERE id = :id AND deleted_at IS NULL FOR UPDATE")
+                .param("id", userId).query(String.class).optional().isEmpty()) {
+            return false;
+        }
         return jdbc.sql("""
                 MERGE INTO device_push_tokens d
                 USING (SELECT id FROM auth_users WHERE id = :userId) account
