@@ -62,6 +62,68 @@ class RestAreaStampIntegrationTest {
     }
 
     @Test
+    void otherDestinationsShowNearbyFacilitiesAndRetainStrictAlertsAndProgress() throws Exception {
+        String couple = uniqueCouple();
+        String drive = start(couple);
+        String unverified = "fixture_nearby_" + UUID.randomUUID();
+        String distant = "fixture_distant_" + UUID.randomUUID();
+        seedArea(unverified, "진입점 미등록", "다른선", "", 127.005);
+        seedArea(distant, "경로에서 먼 시설", ROAD, "", 127.02);
+        jdbc.sql("UPDATE rest_areas SET latitude = 37.03 WHERE id = :id").param("id", unverified).update();
+        jdbc.sql("UPDATE drives SET destination_snapshot = :destination WHERE id = :id")
+                .param("destination", json.writeValueAsString(new Place(null, "헌화로", "", DESTINATION)))
+                .param("id", drive).update();
+
+        var ids = new java.util.ArrayList<String>();
+        String cursor = null;
+        do {
+            var request = get(API + "/drives/" + drive + "/rest-areas")
+                    .principal(() -> recorder(couple)).param("limit", "1");
+            if (cursor != null) {
+                request.param("cursor", cursor);
+            }
+            var page = data(mvc.perform(request).andExpect(status().isOk()).andReturn());
+            page.path("items").forEach(item -> ids.add(item.path("id").asText()));
+            cursor = page.path("nextCursor").isNull() ? null : page.path("nextCursor").asText();
+        } while (cursor != null);
+        assertThat(ids).contains(NORTH, SOUTH, unverified).doesNotContain(distant).doesNotHaveDuplicates();
+        assertThat(ids.indexOf(unverified)).isGreaterThan(ids.indexOf(NORTH));
+
+        Instant observedAt = Instant.now().minusSeconds(90);
+        mvc.perform(gps(couple, drive, 1, 37.006, 127, 12, observedAt))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.restAreaAlerts.length()").value(1))
+                .andExpect(jsonPath("$.data.restAreaAlerts[0].restAreaId").value(NORTH));
+        mvc.perform(gps(couple, drive, 2, 37.023, 127, 12, observedAt.plusSeconds(55)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences[0]").value(2));
+        var remaining = data(mvc.perform(get(API + "/drives/" + drive + "/rest-areas")
+                        .principal(() -> recorder(couple)))
+                .andExpect(status().isOk()).andReturn());
+        var remainingIds = new java.util.ArrayList<String>();
+        remaining.path("items").forEach(item -> remainingIds.add(item.path("id").asText()));
+        assertThat(remainingIds).contains(unverified).doesNotContain(NORTH, SOUTH);
+    }
+
+    @Test
+    void demoDestinationsUseDirectionsForInternalIdsAndNearbyExternalCoordinates() throws Exception {
+        for (String id : List.of("plc_heonhwaro", "plc_daecheon")) {
+            var canonical = jdbc.sql("SELECT latitude, longitude FROM places WHERE id = :id")
+                    .param("id", id).query((row, index) ->
+                            new Coordinate(row.getDouble("latitude"), row.getDouble("longitude"))).single();
+            for (Place destination : List.of(new Place(id, "시연", "", DESTINATION),
+                    new Place(null, "외부 검색", "", new Coordinate(canonical.latitude() + 0.002,
+                            canonical.longitude())))) {
+                String couple = uniqueCouple();
+                String drive = start(couple);
+                jdbc.sql("UPDATE drives SET destination_snapshot = :destination WHERE id = :id")
+                        .param("destination", json.writeValueAsString(destination)).param("id", drive).update();
+                mvc.perform(get(API + "/drives/" + drive + "/rest-areas").principal(() -> recorder(couple)))
+                        .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(1))
+                        .andExpect(jsonPath("$.data.items[0].id").value(NORTH));
+            }
+        }
+    }
+
+    @Test
     void sameResponseSuppliesRouteAndDirectionMatchedMarkersAndGpsTriggersOneAlert() throws Exception {
         String couple = uniqueCouple();
         String drive = start(couple);
@@ -324,7 +386,7 @@ class RestAreaStampIntegrationTest {
                 @Override
                 public Optional<Route> findAccessible(String userId, String coupleId, String routeId) {
                     return Optional.of(new Route(new Place(null, "출발", "", ORIGIN),
-                            new Place(null, "도착", "", DESTINATION)));
+                            new Place("plc_heonhwaro", "도착", "", DESTINATION)));
                 }
 
                 @Override
