@@ -80,11 +80,11 @@ FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `an
 
 카카오 콜백 뒤 `POST /api/v1/auth/reauth`에 Bearer 액세스 토큰, 새 `Idempotency-Key`, `authSessionId`, `authorizationCode`, `state`, `codeVerifier`를 보냅니다. 카카오 계정이 현재 회원과 일치하면 탈퇴 목적의 5분짜리 `reauthToken`을 반환합니다. 계정이 다르면 `403 REAUTH_SUBJECT_MISMATCH`를 반환합니다. 계정 삭제와 증명 소비는 회원 탈퇴 API에서 연결합니다.
 
-### 회원 탈퇴 연동 상태
+### 회원 탈퇴
 
-`DELETE /api/v1/me`는 Bearer 액세스 토큰과 `X-Reauth-Token`으로 본인 증명을 확인합니다. 준비·진행·일시중단 주행이 있으면 `409 ACTIVE_DRIVE_EXISTS`입니다. 현재는 조건을 통과해도 `503 SERVICE_UNAVAILABLE`을 반환합니다.
+`DELETE /api/v1/me`에 Bearer 액세스 토큰과 5분짜리 `X-Reauth-Token`을 보냅니다. 준비·진행·일시중단 주행이 있으면 `409 ACTIVE_DRIVE_EXISTS`를 반환합니다. 카카오 연결 해제에 실패하면 재시도 가능한 `503 PROVIDER_UNLINK_FAILED`를 반환하고, 증명이 만료되기 전까지 같은 증명으로 다시 요청할 수 있습니다.
 
-내부 정리 서비스는 계정 비활성화, 세션 및 푸시 무효화, 커플 해제와 개인 데이터 정리를 한 트랜잭션에서 수행합니다. 업로드 파일은 접근 차단 뒤 기존 미디어 작업에서 정리하며, 개인 콘텐츠와 GPS 좌표는 소유자 및 기록자 기준으로 정리합니다. 공급자 해제와 증명 소비를 포함한 탈퇴 API 연결은 후속 단계입니다.
+카카오 연결 해제가 확인되면 계정 비활성화, 세션과 푸시 무효화, 커플 해제, 개인 데이터 정리 및 증명 소비를 한 DB 트랜잭션에서 수행하고 `204 No Content`를 반환합니다. 업로드 파일은 접근 차단 뒤 기존 미디어 작업에서 정리하며, 개인 콘텐츠와 GPS 좌표는 소유자 및 기록자 기준으로 정리합니다.
 
 ### 현재 커플 조회
 

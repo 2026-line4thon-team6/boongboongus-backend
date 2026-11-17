@@ -57,6 +57,24 @@ class KakaoLoginClientTest {
     }
 
     @Test
+    void acceptsKakaosAlreadyUnlinkedError() {
+        server.expect(requestTo(UNLINK_URL)).andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON).body("{\"code\":-101,\"msg\":\"not linked\"}"));
+
+        client("test-admin-key").unlink(KAKAO_ID);
+        server.verify();
+    }
+
+    @Test
+    void rejectsUnrecognizedBadRequest() {
+        server.expect(requestTo(UNLINK_URL)).andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                .contentType(MediaType.APPLICATION_JSON).body("{\"code\":-103}"));
+
+        assertUnlinkFailed(client("test-admin-key"));
+        server.verify();
+    }
+
+    @Test
     void failsWithoutCallingKakaoWhenAdminKeyIsMissing() {
         assertUnlinkFailed(client(""));
         server.verify();
