@@ -159,6 +159,32 @@ class CardService {
         }
     }
 
+    // Discards a card nobody has started writing (UNWRITTEN). Once either member adds a photo or reflection
+    // the card becomes DRAFT and is kept, so one member cannot erase the other's work.
+    void discard(Principal principal, String coupleId, String id, String key, int expectedVersion) {
+        Actor actor = actor(principal, coupleId);
+        try {
+            idempotency.run(actor.user(), key, List.of("discard-card", coupleId, id, expectedVersion), Boolean.class, () -> {
+                CardRow card = lockForWrite(actor, id);
+                ensureVersion(card.version(), expectedVersion);
+                if (card.completed()) {
+                    throw invalid("CARD_ALREADY_COMPLETED", "저장한 카드는 기록 삭제로 지워 주세요.");
+                }
+                if (!"UNWRITTEN".equals(card.status())) {
+                    throw new CardError(HttpStatus.CONFLICT, "CARD_DRAFT_STARTED", "작성을 시작한 카드는 폐기할 수 없습니다.");
+                }
+                Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+                ensureEditable(card, now);
+                drives.purgeCardGps(actor.couple(), card.driveId(), now);
+                media.replaceCardPhotos(id, actor.couple(), null, List.of(), now);
+                cards.delete(id);
+                return Boolean.TRUE;
+            });
+        } catch (IdempotentWrite.KeyReused error) {
+            throw new CardError(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED", "요청 키가 다른 요청에 사용되었습니다.");
+        }
+    }
+
     void delete(Principal principal, String coupleId, String id, int expectedVersion) {
         Actor actor = actor(principal, coupleId);
         transactions.executeWithoutResult(status -> {
