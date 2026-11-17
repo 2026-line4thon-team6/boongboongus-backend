@@ -10,6 +10,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.NavigableMap;
@@ -73,8 +74,10 @@ class RestAreaService {
         Double progress = gps == null ? Double.valueOf(0)
                 : route.position(gps).map(RestAreaRoute.Projection::meters).orElse(null);
         var earned = catalog.earned(coupleId);
-        var items = route.areas(catalog.all()).stream()
+        var seen = new HashSet<String>();
+        var items = route.matches(catalog.accesses()).stream()
                 .filter(match -> progress == null || match.meters() >= progress)
+                .filter(match -> seen.add(match.area().id()))
                 .map(match -> match.area().summary(progress == null ? null : match.meters() - progress,
                         null, earned.get(match.area().id())))
                 .toList();
@@ -86,14 +89,14 @@ class RestAreaService {
         if (drive.routeId() == null || gps == null || !"ACTIVE".equals(drive.status())) {
             return List.of();
         }
-        var candidates = catalog.all().stream().filter(area -> area.travelBearing() != null
-                && DriveGps.meters(gps, area.coordinate()) <= APPROACH_METERS + 250).toList();
+        var candidates = catalog.accesses().stream()
+                .filter(access -> DriveGps.meters(gps, access.coordinate()) <= APPROACH_METERS + 250).toList();
         if (candidates.isEmpty()) {
             return List.of();
         }
         var alreadySent = jdbc.sql("SELECT rest_area_id FROM drive_rest_area_alerts WHERE drive_id = :drive")
                 .param("drive", drive.id()).query(String.class).set();
-        var unsent = candidates.stream().filter(area -> !alreadySent.contains(area.id())).toList();
+        var unsent = candidates.stream().filter(access -> !alreadySent.contains(access.area().id())).toList();
         if (unsent.isEmpty()) {
             return List.of();
         }
@@ -109,7 +112,7 @@ class RestAreaService {
             return List.of();
         }
         List<Alert> alerts = new ArrayList<>();
-        for (var match : route.areas(unsent)) {
+        for (var match : route.matches(unsent)) {
             double remaining = match.meters() - progress.get().meters();
             if (remaining < 0 || remaining > APPROACH_METERS) {
                 continue;
