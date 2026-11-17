@@ -1,0 +1,2 @@
+ALTER TABLE drives ADD COLUMN eta_refresh_started_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE drives ADD COLUMN estimated_arrival_at TIMESTAMP WITH TIME ZONE;

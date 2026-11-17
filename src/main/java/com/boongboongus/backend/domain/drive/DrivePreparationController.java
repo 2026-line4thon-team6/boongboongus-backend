@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.security.Principal;
 import java.util.List;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -67,6 +68,14 @@ public class DrivePreparationController {
     public ApiResponse<DriveView> get(Principal principal, @PathVariable String driveId) {
         validateIdentifier(driveId, 1, 80, "driveId");
         return ApiResponse.success(service.get(principal, driveId));
+    }
+
+    @GetMapping("/{driveId}/eta")
+    @Operation(operationId = "getDriveEta", summary = "최근 검증 GPS 기준 예상 도착시간 조회")
+    public ResponseEntity<ApiResponse<DriveView.Eta>> eta(Principal principal, @PathVariable String driveId) {
+        validateIdentifier(driveId, 1, 80, "driveId");
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .body(ApiResponse.success(service.eta(principal, driveId)));
     }
 
     @PatchMapping("/{driveId}")

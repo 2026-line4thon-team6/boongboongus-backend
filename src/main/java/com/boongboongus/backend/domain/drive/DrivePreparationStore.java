@@ -11,6 +11,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.NavigableMap;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -88,9 +89,12 @@ class DrivePreparationStore {
     }
 
     void update(DriveRow drive, String title, String routeId, Route route) {
+        boolean routeChanged = route != null && !Objects.equals(drive.routeId(), routeId);
         jdbc.sql("""
                 UPDATE drives SET title = :title, route_id = :routeId, origin_snapshot = :origin,
-                    destination_snapshot = :destination, control_version = control_version + 1
+                    destination_snapshot = :destination, control_version = control_version + 1,
+                    eta_refresh_started_at = CASE WHEN :routeChanged THEN NULL ELSE eta_refresh_started_at END,
+                    estimated_arrival_at = CASE WHEN :routeChanged THEN NULL ELSE estimated_arrival_at END
                 WHERE id = :id
                 """)
                 .param("id", drive.id())
@@ -98,6 +102,7 @@ class DrivePreparationStore {
                 .param("routeId", route == null ? drive.routeId() : routeId)
                 .param("origin", snapshot(route == null ? drive.origin() : route.origin()))
                 .param("destination", snapshot(route == null ? drive.destination() : route.destination()))
+                .param("routeChanged", routeChanged)
                 .update();
     }
 
@@ -178,12 +183,41 @@ class DrivePreparationStore {
     }
 
     Optional<Coordinate> latestCoordinate(String driveId) {
+        return latestVerifiedSample(driveId).map(DriveGps.Sample::coordinate);
+    }
+
+    Optional<DriveGps.Sample> latestVerifiedSample(String driveId) {
         return jdbc.sql("""
-                SELECT latitude, longitude FROM drive_gps_samples
+                SELECT sequence, recorded_at, latitude, longitude FROM drive_gps_samples
                 WHERE drive_id = :id AND latitude IS NOT NULL AND longitude IS NOT NULL
                 ORDER BY recorded_at DESC, sequence DESC LIMIT 1
-                """).param("id", driveId)
-                .query((row, index) -> new Coordinate(row.getDouble("latitude"), row.getDouble("longitude"))).optional();
+                """).param("id", driveId).query((row, index) -> new DriveGps.Sample(row.getInt("sequence"),
+                        instant(row, "recorded_at"),
+                        new Coordinate(row.getDouble("latitude"), row.getDouble("longitude")))).optional();
+    }
+
+    boolean claimEtaRefresh(DriveRow drive, Instant attemptedAt, Instant cutoff, Instant gpsRecordedAt) {
+        return jdbc.sql("""
+                UPDATE drives SET eta_refresh_started_at = :attemptedAt
+                WHERE id = :id AND route_id = :routeId AND status = 'ACTIVE' AND state_changed_at = :phase
+                    AND (eta_refresh_started_at IS NULL
+                        OR (eta_refresh_started_at <= :cutoff AND eta_refresh_started_at < :gpsAt))
+                """).param("attemptedAt", attemptedAt.atOffset(ZoneOffset.UTC))
+                .param("id", drive.id()).param("routeId", drive.routeId())
+                .param("phase", drive.stateChangedAt().atOffset(ZoneOffset.UTC))
+                .param("cutoff", cutoff.atOffset(ZoneOffset.UTC)).param("gpsAt", gpsRecordedAt.atOffset(ZoneOffset.UTC))
+                .update() == 1;
+    }
+
+    void saveEta(DriveRow drive, Instant attemptedAt, Instant arrival) {
+        jdbc.sql("""
+                UPDATE drives SET estimated_arrival_at = :arrival
+                WHERE id = :id AND route_id = :routeId AND status = 'ACTIVE' AND state_changed_at = :phase
+                    AND eta_refresh_started_at = :attemptedAt
+                """).param("arrival", arrival.atOffset(ZoneOffset.UTC))
+                .param("id", drive.id()).param("routeId", drive.routeId())
+                .param("phase", drive.stateChangedAt().atOffset(ZoneOffset.UTC))
+                .param("attemptedAt", attemptedAt.atOffset(ZoneOffset.UTC)).update();
     }
 
     void purgeGps(String driveId, Instant now) {
@@ -288,7 +322,8 @@ class DrivePreparationStore {
                 instant(rs, "started_at"), instant(rs, "state_changed_at"),
                 rs.getLong("active_millis"), rs.getLong("paused_millis"), instant(rs, "ended_at"),
                 rs.getString("end_reason"), rs.getDouble("distance_meters"), instant(rs, "last_gps_at"),
-                rs.getString("gps_quality"), rs.getString("card_id"), instant(rs, "gps_purged_at"));
+                rs.getString("gps_quality"), rs.getString("card_id"), instant(rs, "gps_purged_at"),
+                instant(rs, "estimated_arrival_at"));
     }
 
     private String snapshot(Object value) {
@@ -308,13 +343,13 @@ class DrivePreparationStore {
             String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
             int controlVersion, Instant startedAt, Instant stateChangedAt, long activeMillis, long pausedMillis,
             Instant endedAt, String endReason, double distanceMeters, Instant lastGpsAt, String gpsQuality, String cardId,
-            Instant gpsPurgedAt) {
+            Instant gpsPurgedAt, Instant estimatedArrivalAt) {
 
         DriveRow(String id, String coupleId, String title, String status, String driverUserId,
                 String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
                 int controlVersion) {
             this(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId, routeId, origin,
-                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING", null, null);
+                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING", null, null, null);
         }
 
         DriveView view() {
@@ -327,8 +362,12 @@ class DrivePreparationStore {
             return new DriveView(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId,
                     origin, destination, routeId, startedAt, pausedAt, endedAt, endReason, controlVersion,
                     new DriveView.Metrics(distanceMeters, Math.toIntExact(activeMillisAt(now) / 1000),
-                            Math.toIntExact(pausedMillisAt(now) / 1000), null, lastGpsAt, gpsQuality),
+                            Math.toIntExact(pausedMillisAt(now) / 1000), visibleEta(), lastGpsAt, gpsQuality),
                     editableUntil != null && now.isBefore(editableUntil), cardId, editableUntil, null);
+        }
+
+        Instant visibleEta() {
+            return "ACTIVE".equals(status) || "PAUSED".equals(status) ? estimatedArrivalAt : null;
         }
 
         long activeMillisAt(Instant now) {
