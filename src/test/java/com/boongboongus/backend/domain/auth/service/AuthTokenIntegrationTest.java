@@ -1,7 +1,10 @@
 package com.boongboongus.backend.domain.auth.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -273,7 +276,7 @@ class AuthTokenIntegrationTest {
     }
 
     @Test
-    void deletionChecksProofAndActiveDriveBeforeReportingUnavailable() throws Exception {
+    void deletionChecksProofAndDriveAndAllowsRetryAfterKakaoFailure() throws Exception {
         String owner = createLogoutUser(-91);
         String other = createLogoutUser(-92);
         String proof = UUID.randomUUID().toString();
@@ -298,13 +301,24 @@ class AuthTokenIntegrationTest {
         request.header("X-Reauth-Token", proof);
         mvc.perform(request).andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("ACTIVE_DRIVE_EXISTS"));
+        verifyNoInteractions(kakao);
 
         jdbc.sql("UPDATE drives SET status = 'CANCELLED', active_slot = NULL WHERE id = :id")
                 .param("id", driveId).update();
+        doThrow(TokenExchangeException.providerUnlinkFailed()).doNothing().when(kakao).unlink(-91);
         mvc.perform(request).andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.error.code").value("PROVIDER_UNLINK_FAILED"))
                 .andExpect(jsonPath("$.error.retryable").value(true));
         assertThat(jdbc.sql("SELECT COUNT(*) FROM auth_reauth_proofs WHERE user_id = :id AND consumed_at IS NULL")
                 .param("id", owner).query(Long.class).single()).isEqualTo(1);
+        mvc.perform(get("/api/v1/me").header("Authorization", bearer)).andExpect(status().isOk());
+
+        mvc.perform(request).andExpect(status().isNoContent())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().string(""));
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM auth_reauth_proofs WHERE user_id = :id AND consumed_at IS NOT NULL")
+                .param("id", owner).query(Long.class).single()).isEqualTo(1);
+        mvc.perform(request).andExpect(status().isUnauthorized());
+        verify(kakao, times(2)).unlink(-91);
     }
 
     @Test

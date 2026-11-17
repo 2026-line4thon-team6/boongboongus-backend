@@ -23,6 +23,14 @@ public class ReauthProofRepository {
                 .param("now", now.atOffset(ZoneOffset.UTC)).query(Boolean.class).single();
     }
 
+    public void consume(String hash, String userId, Instant now) {
+        jdbc.sql("""
+                UPDATE auth_reauth_proofs SET consumed_at = :now
+                WHERE token_hash = :hash AND user_id = :userId AND purpose = 'ACCOUNT_DELETION'
+                """).param("hash", hash).param("userId", userId)
+                .param("now", now.atOffset(ZoneOffset.UTC)).update();
+    }
+
     public void save(String hash, String userId, Instant expiresAt) {
         jdbc.sql("""
                 INSERT INTO auth_reauth_proofs (token_hash, user_id, purpose, expires_at)

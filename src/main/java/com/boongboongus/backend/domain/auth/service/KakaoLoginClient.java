@@ -95,11 +95,29 @@ class KakaoLoginClient {
                     || user.id() != kakaoId) {
                 throw TokenExchangeException.providerUnlinkFailed();
             }
+        } catch (RestClientResponseException exception) {
+            if (!alreadyUnlinked(exception)) {
+                throw TokenExchangeException.providerUnlinkFailed();
+            }
         } catch (RestClientException exception) {
             throw TokenExchangeException.providerUnlinkFailed();
         }
     }
 
+    private boolean alreadyUnlinked(RestClientResponseException exception) {
+        if (exception.getStatusCode().value() != 400) {
+            return false;
+        }
+        try {
+            var error = exception.getResponseBodyAs(KakaoError.class);
+            // Kakao -101 confirms the target is no longer linked to this app.
+            return error != null && error.code() == -101;
+        } catch (RestClientException | IllegalStateException unreadableResponse) {
+            return false;
+        }
+    }
+
     private record KakaoToken(@JsonProperty("access_token") String accessToken) {}
     private record KakaoUser(Long id) {}
+    private record KakaoError(int code) {}
 }
