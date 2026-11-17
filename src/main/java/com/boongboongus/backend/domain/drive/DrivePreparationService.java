@@ -38,7 +38,7 @@ public class DrivePreparationService {
     private final CardStore cards;
     private final ObjectProvider<CurrentCoupleLookup> couples;
     private final ObjectProvider<DriveRouteLookup> routes;
-    private final ObjectProvider<DriveLocationConsentLookup> locationConsents;
+    private final DriveLocationConsentLookup locationConsents;
     private final TransactionTemplate transaction;
     private final JsonMapper json;
     private final RestAreaService restAreas;
@@ -47,7 +47,7 @@ public class DrivePreparationService {
 
     DrivePreparationService(DrivePreparationStore store, CardStore cards,
             ObjectProvider<CurrentCoupleLookup> couples,
-            ObjectProvider<DriveRouteLookup> routes, ObjectProvider<DriveLocationConsentLookup> locationConsents,
+            ObjectProvider<DriveRouteLookup> routes, DriveLocationConsentLookup locationConsents,
             TransactionTemplate transaction, JsonMapper json, RestAreaService restAreas, StampService stamps,
             GameRepository games) {
         this.store = store;
@@ -312,11 +312,7 @@ public class DrivePreparationService {
     }
 
     private void requireLocationConsent(String userId) {
-        DriveLocationConsentLookup lookup = locationConsents.getIfAvailable();
-        if (lookup == null) {
-            throw error(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE", "위치 정보 동의를 확인할 수 없습니다.");
-        }
-        if (!lookup.hasLocationConsent(userId)) {
+        if (!locationConsents.hasLocationConsent(userId)) {
             throw error(HttpStatus.FORBIDDEN, "PERMISSION_DENIED", "주행을 시작하려면 위치 정보 동의가 필요합니다.");
         }
     }
