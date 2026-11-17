@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -16,9 +17,13 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
@@ -52,6 +57,9 @@ class PlaceSearchRouteIntegrationTest {
     private static final String DRIVER = "route_driver";
     private static final String PARTNER = "route_partner";
     private static final String COUPLE = "route_couple";
+    private static final String ETA_DRIVER = "eta_driver";
+    private static final String ETA_PARTNER = "eta_partner";
+    private static final String ETA_COUPLE = "eta_couple";
     private static final String ORIGIN = """
             {"placeId":null,"name":"직접 입력한 출발지","address":"","coordinate":{"latitude":37.5,"longitude":127.0}}
             """;
@@ -220,6 +228,85 @@ class PlaceSearchRouteIntegrationTest {
     }
 
     @Test
+    void liveEtaUsesVerifiedGpsAndSharesOneRefreshWithoutDiscardingTheLastResult() throws Exception {
+        String request = "{\"origin\":" + ORIGIN + ",\"destination\":" + DESTINATION + ",\"preference\":\"FASTEST\"}";
+        String routeId = data(mvc.perform(post(ROUTES).principal(() -> ETA_DRIVER)
+                .header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON)
+                .content(request)).andExpect(status().isCreated()).andReturn()).path("id").asText();
+        String driveId = data(mvc.perform(post(API + "/drives").principal(() -> ETA_DRIVER)
+                .header("X-Couple-Id", ETA_COUPLE).header("Idempotency-Key", UUID.randomUUID().toString())
+                .contentType(MediaType.APPLICATION_JSON).content("""
+                        {"driverUserId":"%s","passengerUserId":"%s","recorderUserId":"%s","routeId":"%s"}
+                        """.formatted(ETA_DRIVER, ETA_PARTNER, ETA_DRIVER, routeId)))
+                .andExpect(status().isCreated()).andReturn()).path("id").asText();
+        String drivePath = API + "/drives/" + driveId;
+        String etaPath = drivePath + "/eta";
+        mvc.perform(post(drivePath + "/start").principal(() -> ETA_DRIVER).header("X-Couple-Id", ETA_COUPLE)
+                .header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"expectedVersion\":1,\"initialCoordinate\":{\"latitude\":37.5,\"longitude\":127}}"))
+                .andExpect(status().isOk());
+        mvc.perform(get(etaPath).principal(() -> DRIVER)).andExpect(status().isNotFound());
+        mvc.perform(get(etaPath).principal(() -> ETA_DRIVER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.estimatedArrivalAt").value(nullValue()));
+
+        Instant now = Instant.now();
+        jdbc.sql("UPDATE drives SET started_at = :started, state_changed_at = :started WHERE id = :id")
+                .param("started", now.minusSeconds(150).atOffset(ZoneOffset.UTC)).param("id", driveId).update();
+        addStoredGps(driveId, 1, now.minusSeconds(120), 37.502, 127.002);
+        int before = DIRECTION_CALLS.get();
+        mvc.perform(get(etaPath).principal(() -> ETA_DRIVER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.estimatedArrivalAt").value(nullValue()));
+        assertThat(DIRECTION_CALLS.get()).isEqualTo(before);
+        addStoredGps(driveId, 2, now.minusSeconds(30), 37.501, 127.001);
+        addStoredGps(driveId, 3, now.minusSeconds(20), null, null);
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var first = executor.submit(() -> mvc.perform(get(etaPath).principal(() -> ETA_DRIVER))
+                    .andExpect(status().isOk()).andReturn());
+            var second = executor.submit(() -> mvc.perform(get(etaPath).principal(() -> ETA_PARTNER))
+                    .andExpect(status().isOk()).andReturn());
+            first.get(8, TimeUnit.SECONDS);
+            second.get(8, TimeUnit.SECONDS);
+        }
+        String eta = data(mvc.perform(get(etaPath).principal(() -> ETA_PARTNER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.routeId").value(routeId)).andReturn()).path("estimatedArrivalAt").asText();
+        assertThat(Instant.parse(eta)).isBetween(now.plusSeconds(679), Instant.now().plusSeconds(681));
+        assertThat(DIRECTION_CALLS.get()).isEqualTo(before + 1);
+        mvc.perform(get(drivePath).principal(() -> ETA_DRIVER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.metrics.estimatedArrivalAt").value(eta));
+
+        jdbc.sql("UPDATE drives SET eta_refresh_started_at = :past WHERE id = :id")
+                .param("past", now.minusSeconds(61).atOffset(ZoneOffset.UTC)).param("id", driveId).update();
+        addStoredGps(driveId, 4, now.minusSeconds(5), 37.502, 127.002);
+        mvc.perform(get(etaPath).principal(() -> ETA_DRIVER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.estimatedArrivalAt").value(eta));
+        assertThat(DIRECTION_CALLS.get()).isEqualTo(before + 2);
+        mvc.perform(post(drivePath + "/pause").principal(() -> ETA_DRIVER).header("X-Couple-Id", ETA_COUPLE)
+                .header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"expectedVersion\":2}")).andExpect(status().isOk());
+        mvc.perform(get(etaPath).principal(() -> ETA_PARTNER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.estimatedArrivalAt").value(eta));
+        assertThat(DIRECTION_CALLS.get()).isEqualTo(before + 2);
+        String nextRouteId = data(mvc.perform(post(ROUTES).principal(() -> ETA_DRIVER)
+                .header("Idempotency-Key", UUID.randomUUID().toString()).contentType(MediaType.APPLICATION_JSON)
+                .content(request)).andExpect(status().isCreated()).andReturn()).path("id").asText();
+        mvc.perform(patch(drivePath).principal(() -> ETA_DRIVER).header("X-Couple-Id", ETA_COUPLE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"expectedVersion\":3,\"routeId\":\"" + nextRouteId + "\"}")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.metrics.estimatedArrivalAt").value(nullValue()));
+        mvc.perform(get(etaPath).principal(() -> ETA_PARTNER)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.routeId").value(nextRouteId))
+                .andExpect(jsonPath("$.data.estimatedArrivalAt").value(nullValue()));
+    }
+
+    private void addStoredGps(String driveId, int sequence, Instant at, Double latitude, Double longitude) {
+        jdbc.sql("""
+                INSERT INTO drive_gps_samples (drive_id,sequence,recorded_at,latitude,longitude)
+                VALUES (:id,:sequence,:at,:latitude,:longitude)
+                """).param("id", driveId).param("sequence", sequence).param("at", at.atOffset(ZoneOffset.UTC))
+                .param("latitude", latitude).param("longitude", longitude).update();
+    }
+
+    @Test
     void routeUsesDistanceInsteadOfSegmentCountAndIncludesTrafficOnRead() throws Exception {
         int before = DIRECTION_CALLS.get();
         JsonNode route = createTrafficRoute(37.51);
@@ -311,7 +398,9 @@ class PlaceSearchRouteIntegrationTest {
         DIRECTION_CALLS.incrementAndGet();
         String query = exchange.getRequestURI().getRawQuery();
         if (!"KakaoAK fake-mobility-test-key".equals(exchange.getRequestHeaders().getFirst("Authorization"))
-                || !query.contains("priority=TIME") || !query.contains("summary=false")
+                || !(query.contains("priority=TIME")
+                || (query.contains("priority=RECOMMEND") && query.startsWith("origin=127.001,37.501&")))
+                || !query.contains("summary=false")
                 || !query.contains("destination=127.0417982,37.5430717")) {
             respond(exchange, 503, "{}");
             return;
@@ -352,13 +441,17 @@ class PlaceSearchRouteIntegrationTest {
     static class Fixtures {
         @Bean
         CurrentCoupleLookup currentCoupleLookup() {
-            return user -> DRIVER.equals(user) || PARTNER.equals(user)
-                    ? Optional.of(new CurrentCoupleLookup.Couple(COUPLE, DRIVER, PARTNER)) : Optional.empty();
+            return user -> switch (user) {
+                case DRIVER, PARTNER -> Optional.of(new CurrentCoupleLookup.Couple(COUPLE, DRIVER, PARTNER));
+                case ETA_DRIVER, ETA_PARTNER ->
+                    Optional.of(new CurrentCoupleLookup.Couple(ETA_COUPLE, ETA_DRIVER, ETA_PARTNER));
+                default -> Optional.empty();
+            };
         }
 
         @Bean
         DriveLocationConsentLookup locationConsent() {
-            return DRIVER::equals;
+            return user -> DRIVER.equals(user) || ETA_DRIVER.equals(user);
         }
     }
 }
