@@ -8,6 +8,7 @@ import java.util.Optional;
 public interface PlaceCatalog {
     List<Place> findByCategory(Category category);
 
+    /** Returns recommendations in their configured display order. */
     default List<Place> findRecommendationsByCategory(Category category) {
         return findByCategory(category);
     }

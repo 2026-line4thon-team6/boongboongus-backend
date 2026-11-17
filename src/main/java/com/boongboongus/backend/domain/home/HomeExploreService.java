@@ -74,8 +74,7 @@ class HomeExploreService {
         String prefix = "recommendations/" + category.name() + "/";
         String previous = decodeToken(refreshToken, prefix);
         List<Place> candidates = unique(source.findRecommendationsByCategory(category).stream()
-                .filter(place -> category == place.category())
-                .sorted(Comparator.comparing(Place::id)).toList());
+                .filter(place -> category == place.category()).toList());
         int size = candidates.size();
         int start = size <= RECOMMENDATION_LIMIT ? 0 : indexAfter(candidates, previous, false) % size;
         var items = new ArrayList<PlaceSummary>();
