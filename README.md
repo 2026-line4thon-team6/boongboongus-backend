@@ -74,6 +74,8 @@ FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `an
 
 ### 탈퇴용 카카오 본인 재인증
 
+탈퇴 처리를 활성화할 때 서버의 `KAKAO_LOGIN_ADMIN_KEY`에 카카오 서비스 앱의 어드민 키를 설정합니다. 카카오 연결 해제는 이 키와 서버에 저장된 카카오 회원번호를 사용합니다. 키는 서버 환경에만 보관합니다.
+
 `POST /api/v1/auth/reauth/authorizations`에 Bearer 액세스 토큰과 `Idempotency-Key`(16~128자)를 보내고, 본문에 `provider=KAKAO`, `redirectUri`, `codeChallenge`를 전달합니다. 현재 회원에 연결된 10분짜리 재인증 시도와 카카오 로그인 URL을 반환합니다.
 
 카카오 콜백 뒤 `POST /api/v1/auth/reauth`에 Bearer 액세스 토큰, 새 `Idempotency-Key`, `authSessionId`, `authorizationCode`, `state`, `codeVerifier`를 보냅니다. 카카오 계정이 현재 회원과 일치하면 탈퇴 목적의 5분짜리 `reauthToken`을 반환합니다. 계정이 다르면 `403 REAUTH_SUBJECT_MISMATCH`를 반환합니다. 계정 삭제와 증명 소비는 회원 탈퇴 API에서 연결합니다.
