@@ -55,7 +55,7 @@ class PlaceSharingIntegrationTest {
     void recommendedPlacesCanBeOpenedFavoritedAndShared(Category category) throws Exception {
         String user = UUID.randomUUID().toString();
         var expectedIds = switch (category) {
-            case SEA -> List.of("plc_eurwangni", "plc_heonhwaro", "plc_oido");
+            case SEA -> List.of("plc_daecheon", "plc_eurwangni", "plc_heonhwaro", "plc_oido");
             case NIGHT_VIEW -> List.of("plc_banpo", "plc_namsan", "plc_songdo");
             case NEARBY_CAFE -> List.of("plc_bukhangang_cafe", "plc_heyri", "plc_seojong_cafe");
             case NATURE -> List.of("plc_cheongpyeong", "plc_dumulmeori", "plc_sanjeong_lake");
@@ -81,7 +81,7 @@ class PlaceSharingIntegrationTest {
                     .andExpect(status().isOk()).andExpect(jsonPath("$.data.id").value(place.id()));
         }
         mvc.perform(get(FAVORITES).param("category", category.name()).principal(() -> user))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(3));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(expectedIds.size()));
     }
 
     @Test
@@ -93,11 +93,12 @@ class PlaceSharingIntegrationTest {
                 .andExpect(jsonPath("$.data.hasMore").value(false))
                 .andExpect(jsonPath("$.data.nextCursor").value((Object) null));
 
-        jdbc.sql("UPDATE places SET recommendation_order = 4 WHERE id = 'plc_eurwangni'").update();
+        jdbc.sql("UPDATE places SET recommendation_order = 5 WHERE id = 'plc_eurwangni'").update();
+        jdbc.sql("UPDATE places SET recommendation_order = 2 WHERE id = 'plc_daecheon'").update();
         jdbc.sql("UPDATE places SET recommendation_order = 1, popular_order = 1 WHERE id = 'plc_oido'").update();
         mvc.perform(get(API + "/places/recommendations").param("category", "SEA").principal(() -> OWNER))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.items[*].id", contains("plc_oido", "plc_heonhwaro", "plc_eurwangni")));
+                .andExpect(jsonPath("$.data.items[*].id", contains("plc_oido", "plc_daecheon", "plc_heonhwaro", "plc_eurwangni")));
         mvc.perform(get(API + "/routes/popular").principal(() -> OWNER))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.items[*].id", contains("plc_oido")));
     }
