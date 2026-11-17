@@ -952,19 +952,25 @@ class AuthTokenIntegrationTest {
         var session = gameData(mvc.perform(get(path).header("Authorization", fixture.driverToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.currentQuestion.hint").value(org.hamcrest.Matchers.nullValue()))
-                .andExpect(jsonPath("$.data.currentQuestion.answer").value(org.hamcrest.Matchers.nullValue())));
-        String question = path + "/questions/" + session.path("currentQuestion").path("id").asText();
+                .andExpect(jsonPath("$.data.currentQuestion.answer").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.currentQuestion.answerLength").isNumber()));
+        String questionId = session.path("currentQuestion").path("id").asText();
+        String question = path + "/questions/" + questionId;
+        jdbc.sql("UPDATE game_questions SET answer = :answer WHERE id = :id")
+                .param("answer", "세 글 자").param("id", questionId).update();
         mvc.perform(gameProgress(path + "/next", fixture, fixture.driverToken(), 1))
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.error.code").value("ANSWER_NOT_REVEALED"));
         var hint = gameRequest(post(question + "/hint"), fixture, fixture.passengerToken())
                 .header("Idempotency-Key", UUID.randomUUID().toString());
         mvc.perform(hint).andExpect(status().isOk()).andExpect(jsonPath("$.data.hint").isString())
+                .andExpect(jsonPath("$.data.answerLength").value(3))
                 .andExpect(jsonPath("$.data.answer").value(org.hamcrest.Matchers.nullValue()));
         mvc.perform(hint).andExpect(status().isOk()).andExpect(jsonPath("$.data.hintRevealed").value(true));
         mvc.perform(gameRequest(post(question + "/answer"), fixture, fixture.driverToken())
                 .header("Idempotency-Key", UUID.randomUUID().toString()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.answer").isString());
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.answer").value("세 글 자"))
+                .andExpect(jsonPath("$.data.answerLength").value(3));
 
         endGameDrive(fixture);
         mvc.perform(get(path).header("Authorization", fixture.passengerToken()))
