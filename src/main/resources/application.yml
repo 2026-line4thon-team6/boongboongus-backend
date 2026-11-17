@@ -42,6 +42,7 @@ app:
   auth:
     token-key: ${AUTH_TOKEN_KEY:}
     kakao:
+      admin-key: ${KAKAO_LOGIN_ADMIN_KEY:}
       client-secret: ${KAKAO_LOGIN_CLIENT_SECRET:}
       rest-api-key: ${KAKAO_LOGIN_REST_API_KEY:}
       redirect-uris: ${KAKAO_LOGIN_REDIRECT_URIS:}
