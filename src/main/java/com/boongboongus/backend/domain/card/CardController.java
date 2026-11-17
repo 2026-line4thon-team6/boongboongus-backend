@@ -80,6 +80,18 @@ class CardController {
         return ApiResponse.success(cards.complete(principal, coupleId, cardId, key, request.expectedVersion()));
     }
 
+    @PostMapping("/cards/{cardId}/discard")
+    @Operation(operationId = "discardCard", summary = "작성하지 않은 카드 폐기")
+    ResponseEntity<Void> discard(Principal principal, @PathVariable String cardId,
+            @RequestHeader("X-Couple-Id") String coupleId, @RequestHeader("Idempotency-Key") String key,
+            @Valid @RequestBody Discard request) {
+        validateHeader(coupleId, 1, 80);
+        validateHeader(cardId, 1, 80);
+        validateHeader(key, 16, 128);
+        cards.discard(principal, coupleId, cardId, key, request.expectedVersion());
+        return ResponseEntity.noContent().build();
+    }
+
     @DeleteMapping("/cards/{cardId}")
     @Operation(operationId = "deleteCard")
     ResponseEntity<Void> delete(Principal principal, @PathVariable String cardId,
@@ -157,6 +169,13 @@ class CardController {
         @JsonAnySetter
         void rejectUnknown(String name, Object value) {
             throw new IllegalArgumentException("Unknown card completion field");
+        }
+    }
+
+    record Discard(@NotNull @Min(1) Integer expectedVersion) {
+        @JsonAnySetter
+        void rejectUnknown(String name, Object value) {
+            throw new IllegalArgumentException("Unknown card discard field");
         }
     }
 }

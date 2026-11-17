@@ -41,8 +41,11 @@ class RestAreaStampIntegrationTest {
     private static final String API = "/api/v1";
     private static final String NORTH = "fixture_rest_north";
     private static final String SOUTH = "fixture_rest_south";
+    private static final String SHARED = "fixture_rest_shared";
     private static final String ROUTE_ID = "fixture_rest_route";
     private static final String ROAD = "테스트고속도로";
+    private static final String SHARED_ROUTE_ID = "fixture_shared_route";
+    private static final String SHARED_ROAD = "공용고속도로";
     private static final Coordinate ORIGIN = new Coordinate(37, 127);
     private static final Coordinate DESTINATION = new Coordinate(37.05, 127);
     private static final String POLYLINE = "_sh`F_sfhWozH?";
@@ -128,6 +131,42 @@ class RestAreaStampIntegrationTest {
     }
 
     @Test
+    void sharedRestAreaHasOneMarkerAlertAndStampOnALoopIncludingBothDirections() throws Exception {
+        seedArea(SHARED, "공용 휴게소", SHARED_ROAD, "양방향", 127);
+        seedAccess(SHARED, "north", 127.0004, 0, 60);
+        seedAccess(SHARED, "south", 126.9996, 180, 60);
+        String couple = uniqueCouple();
+        String drive = start(couple, SHARED_ROUTE_ID);
+        mvc.perform(get(API + "/drives/" + drive + "/rest-areas").principal(() -> recorder(couple)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(SHARED));
+
+        Instant observedAt = Instant.now().minusSeconds(110);
+        mvc.perform(gps(couple, drive, 1, 37.006, 127.0004, 12, observedAt))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.restAreaAlerts.length()").value(1))
+                .andExpect(jsonPath("$.data.restAreaAlerts[0].restAreaId").value(SHARED));
+        mvc.perform(gps(couple, drive, 2, 37.02, 127.0004, 12, observedAt.plusSeconds(20)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences[0]").value(2));
+        mvc.perform(gps(couple, drive, 3, 37.04, 127.0004, 12, observedAt.plusSeconds(50)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences[0]").value(3));
+        mvc.perform(get(API + "/drives/" + drive + "/rest-areas").principal(() -> recorder(couple)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(1))
+                .andExpect(jsonPath("$.data.items[0].id").value(SHARED));
+        mvc.perform(gps(couple, drive, 4, 37.026, 126.9996, 12, observedAt.plusSeconds(80)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.acceptedSequences[0]").value(4))
+                .andExpect(jsonPath("$.data.restAreaAlerts").isEmpty());
+
+        for (String user : List.of(recorder(couple), partner(couple))) {
+            mvc.perform(write(API + "/drives/" + drive + "/stamp-claims", couple, user,
+                    UUID.randomUUID().toString(), claim(SHARED, "GPS")))
+                    .andExpect(status().isCreated()).andExpect(jsonPath("$.data.status").value("VERIFIED"));
+        }
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM rest_area_stamps WHERE couple_id = :couple")
+                .param("couple", couple).query(Long.class).single()).isEqualTo(1L);
+    }
+
+    @Test
     void expiryRejectsExistingClaimsAndReturns422ForNewClaimsWithoutEvidence() throws Exception {
         String couple = uniqueCouple();
         String drive = start(couple);
@@ -183,17 +222,35 @@ class RestAreaStampIntegrationTest {
     }
 
     private void seed(String id, double longitude, int bearing, String direction) {
+        seedArea(id, "테스트 휴게소 " + direction, ROAD, direction, longitude);
+        seedAccess(id, "legacy", longitude, bearing, 250);
+    }
+
+    private void seedArea(String id, String name, String road, String direction, double longitude) {
         jdbc.sql("""
-                INSERT INTO rest_areas (id, source_id, name, highway_name, direction, latitude, longitude, travel_bearing)
-                VALUES (:id, :id, :name, :road, :direction, 37.02, :longitude, :bearing) ON CONFLICT DO NOTHING
-                """).param("id", id).param("name", "테스트 휴게소 " + direction).param("road", ROAD)
-                .param("direction", direction).param("longitude", longitude).param("bearing", bearing).update();
+                INSERT INTO rest_areas (id, source_id, name, highway_name, direction, latitude, longitude)
+                VALUES (:id, :id, :name, :road, :direction, 37.02, :longitude) ON CONFLICT DO NOTHING
+                """).param("id", id).param("name", name).param("road", road)
+                .param("direction", direction).param("longitude", longitude).update();
+    }
+
+    private void seedAccess(String id, String approach, double longitude, int bearing, int radius) {
+        jdbc.sql("""
+                INSERT INTO rest_area_accesses (rest_area_id, approach, latitude, longitude, travel_bearing,
+                    match_radius_meters, source)
+                VALUES (:id, :approach, 37.02, :longitude, :bearing, :radius, 'test') ON CONFLICT DO NOTHING
+                """).param("id", id).param("approach", approach).param("longitude", longitude)
+                .param("bearing", bearing).param("radius", radius).update();
     }
 
     private String start(String couple) throws Exception {
+        return start(couple, ROUTE_ID);
+    }
+
+    private String start(String couple, String routeId) throws Exception {
         String prepare = """
                 {"driverUserId":"%s","passengerUserId":"%s","recorderUserId":"%s","routeId":"%s"}
-                """.formatted(recorder(couple), partner(couple), recorder(couple), ROUTE_ID);
+                """.formatted(recorder(couple), partner(couple), recorder(couple), routeId);
         String drive = data(mvc.perform(write(API + "/drives", couple, recorder(couple),
                 UUID.randomUUID().toString(), prepare)).andExpect(status().isCreated()).andReturn()).path("id").asText();
         mvc.perform(write(API + "/drives/" + drive + "/start", couple, recorder(couple),
@@ -272,6 +329,13 @@ class RestAreaStampIntegrationTest {
 
                 @Override
                 public Optional<LiveRoute> findLiveForDrive(String userId, String coupleId, String routeId) {
+                    if (SHARED_ROUTE_ID.equals(routeId)) {
+                        return Optional.of(new LiveRoute(routeId, POLYLINE, List.of(
+                                new Road(SHARED_ROAD, List.of(new Coordinate(37, 127.0004),
+                                        new Coordinate(37.05, 127.0004))),
+                                new Road(SHARED_ROAD, List.of(new Coordinate(37.05, 126.9996),
+                                        new Coordinate(37, 126.9996))))));
+                    }
                     return Optional.of(new LiveRoute(routeId, POLYLINE, List.of(new Road(ROAD,
                             List.of(ORIGIN, DESTINATION)))));
                 }

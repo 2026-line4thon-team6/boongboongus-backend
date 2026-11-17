@@ -385,6 +385,67 @@ class DriveCardIntegrationTest {
     }
 
     @Test
+    void discardsUnwrittenCardForBothMembersAndPurgesItsGps() throws Exception {
+        String id = endDrive();
+        String visited = "rest_36d9396b955db6690ee21c41";
+        OffsetDateTime now = OffsetDateTime.now();
+        seedPendingStamp("claim_discarded", visited, now);
+        jdbc.sql("""
+                INSERT INTO drive_gps_samples (drive_id, sequence, recorded_at, latitude, longitude)
+                SELECT :drive, 1, :recorded, latitude, longitude FROM rest_areas WHERE id = :area
+                """).param("drive", drive).param("recorded", now.minusMinutes(1)).param("area", visited).update();
+        mvc.perform(auth(get(API + "/home"), passenger)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.pendingCards[0].cardId").value(id));
+
+        String key = UUID.randomUUID().toString();
+        mvc.perform(discardCard(id, passenger, UUID.randomUUID().toString(), 2)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("VERSION_CONFLICT"));
+        mvc.perform(discardCard(id, passenger, key, 1)).andExpect(status().isNoContent());
+        mvc.perform(discardCard(id, passenger, key, 1)).andExpect(status().isNoContent());
+        mvc.perform(discardCard(id, passenger, key, 2)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("IDEMPOTENCY_KEY_REUSED"));
+        mvc.perform(discardCard(id, driver, UUID.randomUUID().toString(), 1)).andExpect(status().isNotFound());
+
+        for (String user : java.util.List.of(driver, passenger)) {
+            mvc.perform(auth(get(cardPath(id)), user)).andExpect(status().isNotFound());
+            mvc.perform(auth(get(API + "/drives/" + drive + "/card"), user)).andExpect(status().isNotFound());
+            mvc.perform(auth(get(API + "/home"), user)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.pendingCards").isEmpty());
+            mvc.perform(auth(get(API + "/records"), user)).andExpect(status().isOk())
+                    .andExpect(jsonPath("$.data.totalCount").value(0));
+        }
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM drive_gps_samples WHERE drive_id = :drive")
+                .param("drive", drive).query(Integer.class).single()).isZero();
+        assertThat(claimStatus("claim_discarded")).isEqualTo("VERIFIED");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM rest_area_stamps WHERE first_drive_id = :id")
+                .param("id", drive).query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void refusesToDiscardStartedCompletedOrExpiredCards() throws Exception {
+        String id = endDrive();
+        mvc.perform(reflect(id, driver, "쓰는 중인 소감", false, 0)).andExpect(status().isOk());
+        mvc.perform(discardCard(id, passenger, UUID.randomUUID().toString(), 1)).andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("CARD_DRAFT_STARTED"));
+        mvc.perform(auth(get(cardPath(id)), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("DRAFT"));
+
+        mvc.perform(reflect(id, driver, "쓰는 중인 소감", true, 1)).andExpect(status().isOk());
+        mvc.perform(complete(id, driver, UUID.randomUUID().toString(), 1)).andExpect(status().isOk());
+        mvc.perform(discardCard(id, passenger, UUID.randomUUID().toString(), 2)).andExpect(status().is(422))
+                .andExpect(jsonPath("$.error.code").value("CARD_ALREADY_COMPLETED"));
+
+        String expired = recordId("expired");
+        record("expired", "UNWRITTEN", "지난 카드", OffsetDateTime.now().minusDays(3).toString(),
+                "destination_expired", "지난 목적지", 37.5, 127);
+        jdbc.sql("UPDATE drive_cards SET editable_until = :past WHERE id = :id")
+                .param("past", OffsetDateTime.now().minusHours(1)).param("id", expired).update();
+        mvc.perform(discardCard(expired, passenger, UUID.randomUUID().toString(), 1)).andExpect(status().isGone())
+                .andExpect(jsonPath("$.error.code").value("CARD_EDIT_WINDOW_CLOSED"));
+        mvc.perform(discardCard(id, passenger, "short", 2)).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void serializesCardDeletionAndSharedDraftEdit() throws Exception {
         String id = endDrive();
         mvc.perform(reflect(id, driver, "소감", true, 0)).andExpect(status().isOk());
@@ -404,6 +465,12 @@ class DriveCardIntegrationTest {
             }
         }
         mvc.perform(auth(get(cardPath(id)), driver)).andExpect(status().isNotFound());
+    }
+
+    private MockHttpServletRequestBuilder discardCard(String cardId, String user, String key, int version) {
+        return jsonRequest(post(cardPath(cardId) + "/discard"), user, """
+                {"expectedVersion":%d}
+                """.formatted(version)).header("Idempotency-Key", key);
     }
 
     private MockHttpServletRequestBuilder deleteCard(String cardId, String user, String version) {
