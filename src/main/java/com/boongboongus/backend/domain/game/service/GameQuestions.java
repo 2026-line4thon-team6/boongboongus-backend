@@ -17,13 +17,13 @@ final class GameQuestions {
             balance("쉬어 가고 싶은 곳은?", "조용한 숲길", "한적한 강변"),
             balance("여행을 한 가지로 남긴다면?", "사진 한 장", "짧은 일기"));
     private static final List<Seed> NONSENSE = List.of(
-            nonsense("왕이 넘어지면?", "ㅋㅋ", "킹콩"),
-            nonsense("소가 웃으면?", "ㅇㅎㅎ", "우하하"),
-            nonsense("오리가 얼면?", "ㅇㄷ", "언덕"),
-            nonsense("세상에서 가장 뜨거운 과일은?", "ㅊㄷ", "천도"),
-            nonsense("사과가 웃으면?", "ㅍㅇㅇㅍ", "풋애플"),
-            nonsense("전화기로 지은 건물은?", "ㅋㅅㅌ", "콜센터"),
-            nonsense("왕이 헤어질 때 하는 인사는?", "ㅂㅇㅋ", "바이킹"));
+            nonsense("왕이 넘어지면?", "킹콩"),
+            nonsense("소가 웃으면?", "우하하"),
+            nonsense("오리가 얼면?", "언덕"),
+            nonsense("세상에서 가장 뜨거운 과일은?", "천도"),
+            nonsense("사과가 웃으면?", "풋애플"),
+            nonsense("전화기로 지은 건물은?", "콜센터"),
+            nonsense("왕이 헤어질 때 하는 인사는?", "바이킹"));
     private static final List<String> MEMORY_PROMPTS = List.of(
             "‘%s’에서 누가 먼저 다시 가자고 할 것 같나요?",
             "‘%s’에서 누가 더 신나게 노래를 골랐을까요?",
@@ -64,7 +64,17 @@ final class GameQuestions {
         return new Seed(prompt, a, b, null, null);
     }
 
-    private static Seed nonsense(String prompt, String hint, String answer) {
-        return new Seed(prompt, null, null, hint, answer);
+    static Seed nonsense(String prompt, String answer) {
+        String initials = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+        var hint = new StringBuilder();
+        for (int codePoint : answer.codePoints().toArray()) {
+            if (codePoint >= '가' && codePoint <= '힣') {
+                // Each Hangul initial spans 21 vowels and 28 final consonants.
+                hint.append(initials.charAt((codePoint - '가') / (21 * 28)));
+            } else if (!Character.isWhitespace(codePoint) && !Character.isSpaceChar(codePoint)) {
+                hint.appendCodePoint(codePoint);
+            }
+        }
+        return new Seed(prompt, null, null, hint.toString(), answer);
     }
 }
