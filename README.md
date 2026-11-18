@@ -259,7 +259,7 @@ app:
 
 ## AI 라디오
 
-로컬 테스트에는 `GROQ_API_KEY`와 Text to Speech 권한이 있는 `ELEVENLABS_API_KEY`를 로컬 `.env`에 설정하고 서버를 시작합니다. Groq는 사연의 핵심을 담은 짧은 한국어 대본을 작성합니다. 대본은 공백과 문장부호를 포함해 최대 250자이며, 초과하면 음성을 생성하기 전에 작업이 실패합니다. 유효한 대본은 ElevenLabs에서 MP3로 변환합니다.
+로컬 테스트에는 `GROQ_API_KEY`와 Text to Speech 권한이 있는 `ELEVENLABS_API_KEY`를 로컬 `.env`에 설정하고 서버를 시작합니다. 사연 방송은 “안녕하세요. 붕붕이 DJ입니다. 오늘 사연자가 보내주신 사연이네요.”, 사연 원문과 “라고 보내주셨네요.”, Groq의 공감 멘트 2~3문장, “오늘도 즐거운 드라이브 시간 보내세요.” 순서입니다. 고정 문구와 사연 원문은 서버가 조합합니다. AI 멘트는 최대 200자, 사연 방송 전체는 최대 600자, 랜덤 방송은 최대 250자이며 공백과 문장부호를 포함합니다. 한도를 초과하면 음성 생성 전에 작업이 실패합니다. 유효한 대본은 ElevenLabs에서 MP3로 변환합니다.
 
 1. Bearer 토큰과 새 `Idempotency-Key`로 `POST /api/v1/radio/episodes`에 `{"mode":"USER_STORY","story":"오늘 운전해줘서 고마워!"}`를 보냅니다. 랜덤 방송은 `{"mode":"RANDOM"}`을 보냅니다.
 2. `GET /api/v1/jobs/{jobId}`에서 `SUCCEEDED`와 `resourceId`를 확인합니다.

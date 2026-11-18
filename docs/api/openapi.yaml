@@ -12527,7 +12527,7 @@ components:
           - string
           - 'null'
           example: 함께하는 드라이브가 따뜻한 추억이 되길 바라요.
-          description: ''
+          description: 사연 방송은 고정 인사, 사연 원문 낭독, AI 공감 멘트 2~3문장, 고정 마무리 순서로 최대 600자. 랜덤 방송은 최대 250자.
         audioUrl:
           type:
           - string
