@@ -9,17 +9,25 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @Component
 class DjMusicClient {
+    private static final Logger log = LoggerFactory.getLogger(DjMusicClient.class);
     private static final int MAX_CANDIDATES = 24;
     private final RestClient http;
     private final JsonMapper json;
@@ -30,19 +38,29 @@ class DjMusicClient {
     private String spotifyToken;
     private Instant tokenExpiry = Instant.EPOCH;
 
+    @Autowired
     DjMusicClient(JsonMapper json, @Value("${GROQ_API_KEY:}") String groqKey,
             @Value("${GROQ_DJ_MODEL:openai/gpt-oss-20b}") String model,
             @Value("${SPOTIFY_CLIENT_ID:}") String spotifyId,
             @Value("${SPOTIFY_CLIENT_SECRET:}") String spotifySecret) {
-        var factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(3000);
-        factory.setReadTimeout(8000);
-        this.http = RestClient.builder().requestFactory(factory).build();
+        this(json, groqKey, model, spotifyId, spotifySecret, createHttpClient());
+    }
+
+    DjMusicClient(JsonMapper json, String groqKey, String model, String spotifyId,
+            String spotifySecret, RestClient http) {
+        this.http = http;
         this.json = json;
         this.groqKey = groqKey;
         this.model = model;
         this.spotifyId = spotifyId;
         this.spotifySecret = spotifySecret;
+    }
+
+    private static RestClient createHttpClient() {
+        var factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(30000);
+        return RestClient.builder().requestFactory(factory).build();
     }
 
     boolean configured() {
@@ -51,7 +69,7 @@ class DjMusicClient {
 
     List<Song> recommend(PlaylistRequest request, int targetSeconds) {
         int count = Math.clamp((targetSeconds / 180L) + 4, 5, MAX_CANDIDATES);
-        var completion = http.post().uri("https://api.groq.com/openai/v1/chat/completions")
+        var completion = request("groq-completion", () -> http.post().uri("https://api.groq.com/openai/v1/chat/completions")
                 .headers(headers -> headers.setBearerAuth(groqKey))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("model", model, "max_completion_tokens", 4096,
@@ -64,7 +82,7 @@ class DjMusicClient {
                                         """),
                                 Map.of("role", "user", "content", "Suggest up to %d songs. Moods: %s. Weather: %s. Genres: %s."
                                         .formatted(count, request.moods(), request.weather(), request.genres())))))
-                .retrieve().body(JsonNode.class);
+                .retrieve().body(JsonNode.class));
         var candidates = json.readTree(completion.path("choices").path(0).path("message").path("content").asText())
                 .path("tracks");
         var songs = new ArrayList<Song>();
@@ -91,11 +109,11 @@ class DjMusicClient {
 
     private Song search(String title, String artist) {
         String token = spotifyAccessToken();
-        var response = http.get()
+        var response = request("spotify-search", () -> http.get()
                 .uri("https://api.spotify.com/v1/search?type=track&market=KR&limit=5&q={query}",
                         "track:" + title + " artist:" + artist)
                 .headers(headers -> headers.setBearerAuth(token))
-                .retrieve().body(JsonNode.class);
+                .retrieve().body(JsonNode.class));
         for (JsonNode track : response.path("tracks").path("items")) {
             String name = track.path("name").asText("");
             if (!normalized(name).equals(normalized(title)) || !hasArtist(track, artist)) {
@@ -138,10 +156,10 @@ class DjMusicClient {
         }
         var form = new LinkedMultiValueMap<String, String>();
         form.add("grant_type", "client_credentials");
-        var response = http.post().uri("https://accounts.spotify.com/api/token")
+        var response = request("spotify-token", () -> http.post().uri("https://accounts.spotify.com/api/token")
                 .headers(headers -> headers.setBasicAuth(spotifyId, spotifySecret))
                 .contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                .body(form).retrieve().body(JsonNode.class);
+                .body(form).retrieve().body(JsonNode.class));
         String token = response.path("access_token").asText("");
         if (token.isBlank()) {
             throw new IllegalStateException("Spotify did not return an access token");
@@ -149,6 +167,35 @@ class DjMusicClient {
         spotifyToken = token;
         tokenExpiry = Instant.now().plusSeconds(Math.max(0, response.path("expires_in").asLong() - 30));
         return token;
+    }
+
+    private <T> T request(String operation, Supplier<T> call) {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return call.get();
+            } catch (RestClientException error) {
+                boolean transientFailure = error instanceof ResourceAccessException;
+                String failure = error.getClass().getSimpleName();
+                if (error instanceof ResourceAccessException && error.getCause() != null) {
+                    failure = error.getCause().getClass().getSimpleName();
+                }
+                if (error instanceof RestClientResponseException response) {
+                    int status = response.getStatusCode().value();
+                    transientFailure = status == 408 || response.getStatusCode().is5xxServerError();
+                    failure = "HTTP_" + status;
+                }
+                log.warn("Music API operation={} attempt={} failure={}", operation, attempt, failure);
+                if (attempt == 2 || !transientFailure) {
+                    throw error;
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new RestClientException("Music API retry interrupted", interrupted);
+                }
+            }
+        }
     }
 }
 
