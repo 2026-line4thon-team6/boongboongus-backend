@@ -11102,7 +11102,7 @@ components:
           - string
           - 'null'
           example: ply_01
-          description: 서버 발급 불투명 ID. 타입·순서를 추론하지 않는다.
+          description: 해당 주행에 연결된 생성 완료 플레이리스트 중 최신 ID. createdAt 내림차순, 같은 시각이면 ID 내림차순이며 미연결 시 null.
           minLength: 1
           maxLength: 80
       required:
@@ -11896,7 +11896,7 @@ components:
           anyOf:
           - $ref: '#/components/schemas/PlaylistSummary'
           - type: 'null'
-          description: 미연결/미설정 시 null.
+          description: 저장된 플레이리스트 요약. 요약이 비어 있으면 해당 주행에 연결된 최신 생성 결과로 조회하며, 카드 완성 시 요약을 저장한다. 미연결 시 null.
         photos:
           type: array
           items:

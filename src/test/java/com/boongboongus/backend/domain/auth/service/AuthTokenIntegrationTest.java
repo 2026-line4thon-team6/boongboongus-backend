@@ -838,6 +838,28 @@ class AuthTokenIntegrationTest {
     }
 
     @Test
+    void generatedDrivePlaylistIsVisibleToBothMembersAndItsCard() throws Exception {
+        var fixture = gameDrive(-1910, "ACTIVE");
+        var create = post("/api/v1/playlists").contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", fixture.driverToken())
+                .header("Idempotency-Key", UUID.randomUUID().toString())
+                .content("""
+                        {"driveId":"%s","moods":["ROMANTIC"],"weather":"SUNNY","genres":["K_POP"]}
+                        """.formatted(fixture.drive()));
+        String jobId = gameData(mvc.perform(create).andExpect(status().isAccepted())).path("id").asText();
+        var job = awaitGame(fixture, jobId);
+        assertThat(job.status()).isEqualTo(JobResponse.Status.SUCCEEDED);
+        mvc.perform(get("/api/v1/drives/" + fixture.drive()).header("Authorization", fixture.driverToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.playlistId").value(job.resourceId()));
+        mvc.perform(get("/api/v1/drives/active").header("Authorization", fixture.passengerToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.drive.playlistId").value(job.resourceId()));
+        endGameDrive(fixture);
+        mvc.perform(get("/api/v1/drives/" + fixture.drive() + "/card")
+                        .header("Authorization", fixture.passengerToken()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.playlist.id").value(job.resourceId()));
+    }
+
+    @Test
     void permitsBothDriveParticipantsToEditOneSharedPlaylist() throws Exception {
         String driver = createLogoutUser(-140);
         String passenger = createLogoutUser(-141);
