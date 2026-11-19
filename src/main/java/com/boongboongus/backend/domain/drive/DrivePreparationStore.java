@@ -21,7 +21,9 @@ import tools.jackson.databind.json.JsonMapper;
 @Repository
 class DrivePreparationStore {
     private static final String DRIVE_SELECT = """
-            SELECT drives.*, (SELECT id FROM drive_cards WHERE drive_id = drives.id) AS card_id
+            SELECT drives.*, (SELECT id FROM drive_cards WHERE drive_id = drives.id) AS card_id,
+                (SELECT p.id FROM playlists p WHERE p.drive_id = drives.id
+                    ORDER BY p.created_at DESC, p.id DESC LIMIT 1) AS playlist_id
             FROM drives
             """;
     private final JdbcClient jdbc;
@@ -323,7 +325,7 @@ class DrivePreparationStore {
                 rs.getLong("active_millis"), rs.getLong("paused_millis"), instant(rs, "ended_at"),
                 rs.getString("end_reason"), rs.getDouble("distance_meters"), instant(rs, "last_gps_at"),
                 rs.getString("gps_quality"), rs.getString("card_id"), instant(rs, "gps_purged_at"),
-                instant(rs, "estimated_arrival_at"));
+                instant(rs, "estimated_arrival_at"), rs.getString("playlist_id"));
     }
 
     private String snapshot(Object value) {
@@ -343,13 +345,13 @@ class DrivePreparationStore {
             String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
             int controlVersion, Instant startedAt, Instant stateChangedAt, long activeMillis, long pausedMillis,
             Instant endedAt, String endReason, double distanceMeters, Instant lastGpsAt, String gpsQuality, String cardId,
-            Instant gpsPurgedAt, Instant estimatedArrivalAt) {
+            Instant gpsPurgedAt, Instant estimatedArrivalAt, String playlistId) {
 
         DriveRow(String id, String coupleId, String title, String status, String driverUserId,
                 String passengerUserId, String recorderUserId, String routeId, Place origin, Place destination,
                 int controlVersion) {
             this(id, coupleId, title, status, driverUserId, passengerUserId, recorderUserId, routeId, origin,
-                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING", null, null, null);
+                    destination, controlVersion, null, null, 0, 0, null, null, 0, null, "MISSING", null, null, null, null);
         }
 
         DriveView view() {
@@ -363,7 +365,7 @@ class DrivePreparationStore {
                     origin, destination, routeId, startedAt, pausedAt, endedAt, endReason, controlVersion,
                     new DriveView.Metrics(distanceMeters, Math.toIntExact(activeMillisAt(now) / 1000),
                             Math.toIntExact(pausedMillisAt(now) / 1000), visibleEta(), lastGpsAt, gpsQuality),
-                    editableUntil != null && now.isBefore(editableUntil), cardId, editableUntil, null);
+                    editableUntil != null && now.isBefore(editableUntil), cardId, editableUntil, playlistId);
         }
 
         Instant visibleEta() {

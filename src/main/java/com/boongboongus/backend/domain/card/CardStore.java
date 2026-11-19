@@ -3,6 +3,7 @@ package com.boongboongus.backend.domain.card;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
 import com.boongboongus.backend.domain.home.HomeDataSource.PendingCard;
 import com.boongboongus.backend.domain.playlist.repository.PlaylistRepository;
+import com.boongboongus.backend.domain.playlist.dto.PlaylistResponse;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -22,7 +23,11 @@ public class CardStore {
             SELECT c.*, d.couple_id, d.driver_user_id, d.passenger_user_id, d.started_at, d.destination_snapshot,
                 d.distance_meters, d.active_millis,
                 (SELECT COUNT(*) FROM rest_area_stamps s WHERE s.couple_id = d.couple_id
-                    AND s.first_drive_id = d.id) AS stamp_count
+                    AND s.first_drive_id = d.id) AS stamp_count,
+                CASE WHEN c.playlist_snapshot IS NULL THEN
+                    (SELECT p.result_snapshot FROM playlists p WHERE p.drive_id = d.id
+                        ORDER BY p.created_at DESC, p.id DESC LIMIT 1)
+                END AS fallback_playlist_snapshot
             FROM drive_cards c JOIN drives d ON d.id = c.drive_id
             """;
 
@@ -37,9 +42,7 @@ public class CardStore {
     }
 
     public void createForDrive(String driveId, String title, Instant endedAt) {
-        String playlist = playlists.latestForDrive(driveId).map(value -> json.writeValueAsString(
-                new CardView.Playlist(value.id(), value.title(), value.trackCount(), value.durationSeconds(),
-                        value.tracks().stream().findFirst().map(track -> track.albumImageUrl()).orElse(null))))
+        String playlist = playlists.latestForDrive(driveId).map(value -> json.writeValueAsString(playlistSummary(value)))
                 .orElse(null);
         jdbc.sql("""
                 INSERT INTO drive_cards (id, drive_id, title, editable_until, playlist_snapshot)
@@ -90,11 +93,14 @@ public class CardStore {
                 .param("id", cardId).update();
     }
 
-    void complete(String cardId, Instant now) {
+    void complete(CardRow card, Instant now) {
         jdbc.sql("""
-                UPDATE drive_cards SET status = 'COMPLETED', completed_at = :now, version = version + 1
+                UPDATE drive_cards SET status = 'COMPLETED', completed_at = :now, version = version + 1,
+                    playlist_snapshot = COALESCE(playlist_snapshot, :playlist)
                 WHERE id = :id
-                """).param("now", utc(now)).param("id", cardId).update();
+                """).param("now", utc(now)).param("id", card.id())
+                .param("playlist", card.playlist() == null ? null : json.writeValueAsString(card.playlist()),
+                        java.sql.Types.VARCHAR).update();
     }
 
     void queueCompletionPush(String cardId, String recipient, Instant now) {
@@ -166,13 +172,23 @@ public class CardStore {
     private CardRow mapCard(ResultSet r, int row) throws SQLException {
         String destination = r.getString("destination_snapshot");
         String playlist = r.getString("playlist_snapshot");
+        String fallback = r.getString("fallback_playlist_snapshot");
+        CardView.Playlist summary = playlist == null ? null : json.readValue(playlist, CardView.Playlist.class);
+        if (summary == null && fallback != null) {
+            summary = playlistSummary(json.readValue(fallback, PlaylistResponse.class));
+        }
         return new CardRow(r.getString("id"), r.getString("drive_id"), r.getString("couple_id"),
                 r.getString("driver_user_id"), r.getString("passenger_user_id"), r.getString("title"),
                 r.getString("status"), instant(r, "started_at"), instant(r, "editable_until"),
                 instant(r, "completed_at"), destination == null ? null : json.readValue(destination, Place.class),
                 r.getDouble("distance_meters"), Math.toIntExact(r.getLong("active_millis") / 1000),
-                r.getInt("stamp_count"), playlist == null ? null : json.readValue(playlist, CardView.Playlist.class),
+                r.getInt("stamp_count"), summary,
                 r.getInt("version"));
+    }
+
+    private static CardView.Playlist playlistSummary(PlaylistResponse value) {
+        return new CardView.Playlist(value.id(), value.title(), value.trackCount(), value.durationSeconds(),
+                value.tracks().stream().findFirst().map(track -> track.albumImageUrl()).orElse(null));
     }
 
     private static ReflectionRow mapReflection(ResultSet r, int row) throws SQLException {
