@@ -50,6 +50,27 @@ class RestAreaCatalog {
                 .list();
     }
 
+    List<MenuFacility> menuFacilities() {
+        return jdbc.sql("SELECT id, source_id, highway_name FROM rest_areas")
+                .query((row, index) -> new MenuFacility(row.getString("id"), row.getString("source_id"),
+                        row.getString("highway_name")))
+                .list().stream().filter(area -> area.sourceId().split(":", 4).length == 4).toList();
+    }
+
+    void replaceMenus(String id, List<String> names) {
+        jdbc.sql("DELETE FROM rest_area_menus WHERE rest_area_id = :id").param("id", id).update();
+        for (int index = 0; index < names.size(); index++) {
+            jdbc.sql("INSERT INTO rest_area_menus (rest_area_id, position, name) VALUES (:id, :position, :name)")
+                    .param("id", id).param("position", index + 1).param("name", names.get(index)).update();
+        }
+    }
+
+    record MenuFacility(String id, String sourceId, String highway) {
+        String sourceName() {
+            return sourceId.split(":", 4)[2];
+        }
+    }
+
     Map<String, Instant> earned(String coupleId) {
         if (coupleId == null) {
             return Map.of();
