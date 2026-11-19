@@ -13,6 +13,7 @@ import com.boongboongus.backend.domain.home.PlaceShareNotification;
 import com.boongboongus.backend.domain.notification.dto.NotificationResponse.Type;
 import com.boongboongus.backend.domain.notification.dto.NotificationResponse.TargetType;
 import java.util.Base64;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -22,16 +23,27 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class NotificationService {
     private final NotificationRepository notifications;
+    private final ApplicationEventPublisher events;
 
-    NotificationService(NotificationRepository notifications) {
+    NotificationService(NotificationRepository notifications, ApplicationEventPublisher events) {
         this.notifications = notifications;
+        this.events = events;
+    }
+
+    // 새로 저장된 알림만 휴대폰 푸시로 보낸다 (중복 이벤트는 다시 보내지 않음)
+    private void insert(String id, String eventKey, String sender, String recipient, Type type, String title,
+            String body, TargetType targetType, String targetId, Instant now) {
+        if (notifications.insert(id, eventKey, sender, recipient, type, title, body, targetType, targetId, now,
+                now.plus(30, ChronoUnit.DAYS))) {
+            events.publishEvent(new NotificationCreated(id, sender, recipient, type, title, body, targetType, targetId));
+        }
     }
 
     PlaceShareNotification.Receipt placeShared(String sender, String recipient, String placeId) {
         String id = "ntf_" + UUID.randomUUID();
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        notifications.insert(id, id, sender, recipient, Type.PLACE_SHARED, "장소 공유",
-                "함께 가고 싶은 장소를 확인해 보세요.", TargetType.PLACE, placeId, now, now.plus(30, ChronoUnit.DAYS));
+        insert(id, id, sender, recipient, Type.PLACE_SHARED, "장소 공유",
+                "함께 가고 싶은 장소를 확인해 보세요.", TargetType.PLACE, placeId, now);
         return new PlaceShareNotification.Receipt(id, now);
     }
 
@@ -39,17 +51,16 @@ public class NotificationService {
         Type type = connected ? Type.COUPLE_CONNECTED : Type.COUPLE_DISCONNECTED;
         String title = connected ? "커플이 연결됐어요" : "커플 연결이 해제됐어요";
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        notifications.insert("ntf_" + UUID.randomUUID(), type + ":" + coupleId + ":" + version,
-                sender, recipient, type, title, "커플 상태를 확인해 보세요.", TargetType.COUPLE, coupleId,
-                now, now.plus(30, ChronoUnit.DAYS));
+        insert("ntf_" + UUID.randomUUID(), type + ":" + coupleId + ":" + version,
+                sender, recipient, type, title, "커플 상태를 확인해 보세요.", TargetType.COUPLE, coupleId, now);
     }
 
     public void cardActivity(String sender, String recipient, String cardId, boolean completed, Instant now) {
         Type type = completed ? Type.CARD_COMPLETED : Type.REFLECTION_SUBMITTED;
         String key = type + ":" + cardId + (completed ? "" : ":" + sender);
         String title = completed ? "드라이브 카드가 저장됐어요" : "상대가 드라이브 소감을 남겼어요";
-        notifications.insert("ntf_" + UUID.randomUUID(), key, sender, recipient, type, title,
-                "드라이브 카드를 확인해 보세요.", TargetType.CARD, cardId, now, now.plus(30, ChronoUnit.DAYS));
+        insert("ntf_" + UUID.randomUUID(), key, sender, recipient, type, title,
+                "드라이브 카드를 확인해 보세요.", TargetType.CARD, cardId, now);
     }
 
     public int countUnread(String userId) {
