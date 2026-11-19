@@ -1614,6 +1614,8 @@ paths:
 
         현재 계정에만 등록. 같은 기기에서 계정 교체 시 이전 계정 연결 해제. OS 알림 권한 확보는 FE 담당. 토큰을 로그에 남기지 않는다.
 
+        platform=WEB이면 token은 브라우저 PushSubscription을 JSON.stringify한 문자열(`endpoint` https, `keys.p256dh` P-256 공개키 65바이트, `keys.auth` 16바이트, base64url)이며 형식이 다르면 400. 서버에 VAPID 키(WEB_PUSH_VAPID_PUBLIC_KEY/PRIVATE_KEY/SUBJECT)가 설정돼 있으면 새 인앱 알림이 생길 때 enabled인 WEB 기기로 Web Push(aes128gcm)를 보내고, 푸시 서비스가 404/410을 주면 그 등록을 지운다. 푸시 본문은 JSON `{notificationId, type, title, body, targetType, targetId}`이며 title은 보낸 사람 닉네임 문구(예: OO님이 드라이브 장소를 공유했어요).
+
 
         **근거:** OFF p7,15; ON p17 · [Figma 97:3321](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=97-3321)
 

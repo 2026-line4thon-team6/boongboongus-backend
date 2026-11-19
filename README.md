@@ -57,6 +57,70 @@ docker compose up -d --wait postgres
 
 기능을 확인할 때 필요한 항목만 설정합니다. 실제 키와 비밀번호는 `.env`나 배포 환경에 보관합니다.
 
+### 붕붕이 이름 변경
+
+`PATCH /api/v1/couples/me/mascot-name`에 Bearer 토큰, `X-Couple-Id`, 본문의 `name`과 `expectedVersion`을 보냅니다. 연결된 두 멤버가 수정할 수 있고, 이름은 앞뒤 공백을 제외하고 1~20자입니다. 시작일 수정과 같은 커플 버전을 사용합니다. 성공 시 바뀐 이름과 증가한 버전을 반환하며, 버전이 다르면 `409 VERSION_CONFLICT`를 반환합니다.
+
+### 초대 코드 폐기와 기기 푸시 등록
+
+- `DELETE /api/v1/couple-invites/{inviteId}`는 내 초대 코드의 효력을 없애고 `204`를 반환합니다. 이미 연결에 사용한 코드는 `409 INVITE_ALREADY_USED`입니다. 폐기 후 새 코드를 발급할 때 새 `Idempotency-Key`를 사용합니다.
+- `PUT /api/v1/devices/{deviceId}/push-token`에 `token`, `platform`(IOS/ANDROID/WEB), `enabled`를 보냅니다. 동일 기기에서 계정이 바뀌면 등록이 현재 계정으로 이동합니다. 성공 응답은 `200`과 `accepted: true`입니다.
+- `DELETE /api/v1/devices/{deviceId}/push-token`은 내 등록만 삭제합니다. 다른 계정에 등록됐거나 등록이 없으면 `204`를 반환합니다. 세 API 모두 Bearer 토큰이 필요합니다.
+
+### 인앱 알림 조회와 읽음 처리
+
+`GET /api/v1/notifications`는 Bearer 토큰으로 본인의 미만료 알림을 최신순으로 반환합니다. `limit` 기본값은 20이며 1~100을 지원합니다. `unreadOnly=true`로 읽지 않은 항목만 조회할 수 있습니다. 다음 페이지에는 응답의 `nextCursor`와 같은 조회 조건을 사용합니다. 알림의 보관 기간은 30일이며 만료 항목을 정리합니다.
+
+`PATCH /api/v1/notifications/{notificationId}/read`는 요청 본문 없이 내 알림을 읽음 처리하고 갱신한 항목을 반환합니다. 이미 읽은 알림의 `readAt`은 유지합니다. 다른 회원의 알림이나 만료된 알림은 `404`입니다. 장소 공유, 커플 연결·복구·해제 시 상대 회원의 인앱 알림을 저장합니다. 홈의 미확인 알림 수에는 읽지 않은 미만료 알림만 포함됩니다. 소감 제출과 실제 푸시 전달은 해당 기능 연동 시 추가합니다.
+
+### AI 생성 작업 조회·취소
+
+`GET /api/v1/jobs/{jobId}`로 로그인한 본인의 생성 상태와 결과 ID를 조회합니다. 진행 중에는 `retryAfterSeconds` 뒤에 다시 조회하고, 종료 상태에서는 조회를 중단합니다. 만료된 작업 조회는 `410 JOB_EXPIRED`를 반환합니다.
+
+`POST /api/v1/jobs/{jobId}/cancel`은 Bearer 토큰과 `Idempotency-Key`(16~128자)를 받습니다. 대기·실행 중인 작업은 `CANCEL_REQUESTED`가 되고 서버가 `CANCELLED`로 마무리합니다. 성공·실패가 먼저 반영된 작업에는 `409 JOB_ALREADY_FINISHED`를 반환합니다. DJ·라디오·게임 생성 작업은 각 기능에서 접수하고 결과를 저장합니다. 생성 작업의 조회 유효기간은 24시간으로 설정했습니다.
+
+### 커플 게임
+
+`POST /api/v1/game-sessions`는 Bearer 토큰, `X-Couple-Id`, `Idempotency-Key`와 `driveId`, `type`을 받습니다. 작업이 성공하면 `resourceId`로 `GET /api/v1/game-sessions/{gameSessionId}`를 호출합니다. 세트는 5문항이며 밸런스는 최소 한 명의 응답, 넌센스는 정답 공개 뒤 진행할 수 있습니다. 추억 게임은 응답 없이도 진행할 수 있습니다. 마지막 문항에서는 `complete`를 사용합니다.
+
+밸런스·넌센스는 서버 문항 목록을 사용합니다. 추억 게임은 현재 커플 구성원이 참여한 종료(`ENDED`) 주행의 제목을 사용하며 기록이 없으면 작업이 `MEMORY_RECORDS_REQUIRED`로 실패합니다. GPS 주행을 종료하거나 준비 주행을 취소하면 진행 중인 게임은 `ABANDONED`가 됩니다.
+
+### 휴게소 대표메뉴
+
+`GET /api/v1/rest-areas/{restAreaId}`는 DB에 저장된 메뉴 이름을 최대 4개 반환합니다. 자동 갱신 시 대표메뉴를 먼저 담고, 남은 자리를 추천메뉴와 일반 메뉴 순으로 채웁니다. 중복 이름은 한 번만 담고, 메뉴가 4개 미만이면 있는 만큼만 반환합니다. 가격과 사진은 저장하지 않습니다. Flyway가 초기 대표메뉴를 넣습니다.
+
+[도로공사 인증키 발급](https://data.ex.co.kr/openapi/apikey/requestKey)에서 이메일로 정식 키를 받아 로컬 `.env` 또는 EC2의 Docker Compose `app.env`에 `EX_REST_AREA_API_KEY`로 설정하고 앱을 다시 시작합니다. 배포 Compose에서 이 값을 백엔드 컨테이너 환경변수로 전달해야 합니다. [푸드메뉴현황 API](https://www.data.go.kr/data/15076643/openapi.do)에서 시작 약 10초 후 첫 갱신을 요청하고 24시간마다 다시 받습니다. 응답을 모두 받은 뒤 노선과 방향이 일치하는 휴게소의 메뉴를 갱신합니다. 키가 없거나 공급자 요청이 실패하면 저장된 메뉴를 계속 제공합니다.
+
+## PostgreSQL 개발 환경
+
+카카오 로그인을 시작하려면 서버의 `.env` 또는 환경변수에 `KAKAO_LOGIN_REST_API_KEY`와 `KAKAO_LOGIN_REDIRECT_URIS`를 설정합니다. 콜백 주소는 카카오디벨로퍼스에 등록한 값과 정확히 일치해야 하며, 여러 주소는 쉼표로 구분합니다. 요청에는 `provider=KAKAO`, `purpose=LOGIN`, `redirectUri`와 앱이 생성한 S256 `codeChallenge`(43자)를 보냅니다. 성공하면 `201`과 카카오 로그인 URL, `authSessionId`, `state`, 10분 후의 만료 시각을 반환합니다. Flyway는 로그인 시도를 저장할 `auth_sessions` 테이블을 생성합니다. 토큰 교환, 만료 세션 정리와 로그인 시작 요청의 호출 제한은 후속 작업입니다.
+
+기본 `local`과 `dev`는 PostgreSQL에 연결합니다. 위에서 만든 `.env`와 DB를 그대로 사용하며, `dev` 프로필로 실행할 때는 다음 명령을 사용합니다.
+
+```powershell
+.\gradlew.bat bootRun --args='--spring.profiles.active=dev'
+```
+
+macOS/Linux에서는 `./gradlew`를 사용합니다. 이미 설치된 PostgreSQL에 연결하려면 Docker 실행을 생략하고 `.env`의 호스트·포트·DB 이름·계정을 해당 서버에 맞춥니다. `.env`는 Spring과 Docker Compose가 읽습니다. 값에 따옴표를 붙이지 않습니다. 실제 비밀값은 Git에 올리지 않습니다.
+
+| 프로필 | 데이터베이스 | 스키마 | Swagger |
+| --- | --- | --- | --- |
+| `local` (기본) | `.env`의 PostgreSQL | `validate` | 켜짐 |
+| `dev` | `.env`의 PostgreSQL | `validate` | 켜짐 |
+| `test` | 기본 H2 PostgreSQL 모드 / CI는 PostgreSQL | `validate` | 켜짐 |
+| `prod` | 환경변수의 PostgreSQL | `validate` | 꺼짐 |
+
+H2는 자동 테스트 의존성에만 포함됩니다. 애플리케이션 시작 시 Flyway가 `src/main/resources/db/migration`의 SQL을 버전 순서대로 적용합니다. 첫 마이그레이션은 `drives`와 `drive_idempotency`를 생성합니다. 운영 배포 전에는 신규 스키마와 마이그레이션 계정 권한을 확인합니다. GitHub CI는 PostgreSQL 서비스에 연결해서 테스트합니다.
+
+### 주행 준비 API
+
+- `POST /api/v1/drives`는 주행 준비 세션을 생성합니다. 커플당 준비·주행·일시중단 상태를 합쳐 한 건만 저장할 수 있습니다.
+- `GET /api/v1/drives/active`는 현재 커플의 진행 가능한 세션을 조회합니다. 해당 세션이 없으면 `data.drive`가 `null`입니다.
+- `POST /api/v1/drives/{driveId}/cancel`은 `expectedVersion`이 일치하는 준비 세션을 취소합니다.
+
+생성·취소에는 `Idempotency-Key`와 `X-Couple-Id`가 필요합니다. 동일 사용자와 커플이 24시간 안에 같은 키로 같은 요청을 다시 보내면 원래 응답 데이터를 돌려줍니다. 키가 만료되면 새 요청으로 처리합니다.
+
+인증 모듈은 서블릿 `Principal`에 검증한 서비스 사용자 ID를 설정하고, 커플 모듈은 `CurrentCoupleLookup`으로 현재 연결과 두 멤버를 제공해야 합니다. 경로를 지정하는 준비 요청은 `DriveRouteLookup`이 제공하는 접근 가능한 경로를 사용합니다. 현재 통합 테스트는 서버 측 테스트 구현으로 각 연동을 검증합니다.
 | 기능 | 설정 |
 | --- | --- |
 | 카카오 로그인 | `KAKAO_LOGIN_REST_API_KEY`, `KAKAO_LOGIN_REDIRECT_URIS`, `AUTH_TOKEN_KEY`. Client Secret을 사용하면 `KAKAO_LOGIN_CLIENT_SECRET`, 카카오 연결 해제에는 `KAKAO_LOGIN_ADMIN_KEY`가 필요합니다. |
