@@ -140,6 +140,12 @@ FAQ는 `src/main/resources/faqs.yml`의 `app.faq.items`에 `id`, `question`, `an
 
 밸런스·넌센스는 서버 문항 목록을 사용합니다. 넌센스 초성 힌트는 정답에서 공백을 제외하고 한글 음절의 초성을 추출해 생성합니다. 추억 게임은 현재 커플 구성원이 참여한 종료(`ENDED`) 주행의 제목을 사용하며 기록이 없으면 작업이 `MEMORY_RECORDS_REQUIRED`로 실패합니다. GPS 주행을 종료하거나 준비 주행을 취소하면 진행 중인 게임은 `ABANDONED`가 됩니다.
 
+### 휴게소 대표메뉴
+
+`GET /api/v1/rest-areas/{restAreaId}`는 DB에 저장된 메뉴 이름을 최대 4개 반환합니다. 자동 갱신 시 대표메뉴를 먼저 담고, 남은 자리를 추천메뉴와 일반 메뉴 순으로 채웁니다. 중복 이름은 한 번만 담고, 메뉴가 4개 미만이면 있는 만큼만 반환합니다. 가격과 사진은 저장하지 않습니다. Flyway가 초기 대표메뉴를 넣습니다.
+
+[도로공사 인증키 발급](https://data.ex.co.kr/openapi/apikey/requestKey)에서 이메일로 정식 키를 받아 로컬 `.env` 또는 EC2의 Docker Compose `app.env`에 `EX_REST_AREA_API_KEY`로 설정하고 앱을 다시 시작합니다. 배포 Compose에서 이 값을 백엔드 컨테이너 환경변수로 전달해야 합니다. [푸드메뉴현황 API](https://www.data.go.kr/data/15076643/openapi.do)에서 시작 약 10초 후 첫 갱신을 요청하고 24시간마다 다시 받습니다. 응답을 모두 받은 뒤 노선과 방향이 일치하는 휴게소의 메뉴를 갱신합니다. 키가 없거나 공급자 요청이 실패하면 저장된 메뉴를 계속 제공합니다.
+
 ## PostgreSQL 개발 환경
 
 카카오 로그인을 시작하려면 서버의 `.env` 또는 환경변수에 `KAKAO_LOGIN_REST_API_KEY`와 `KAKAO_LOGIN_REDIRECT_URIS`를 설정합니다. 콜백 주소는 카카오디벨로퍼스에 등록한 값과 정확히 일치해야 하며, 여러 주소는 쉼표로 구분합니다. 요청에는 `provider=KAKAO`, `purpose=LOGIN`, `redirectUri`와 앱이 생성한 S256 `codeChallenge`(43자)를 보냅니다. 성공하면 `201`과 카카오 로그인 URL, `authSessionId`, `state`, 10분 후의 만료 시각을 반환합니다. Flyway는 로그인 시도를 저장할 `auth_sessions` 테이블을 생성합니다. 토큰 교환, 만료 세션 정리와 로그인 시작 요청의 호출 제한은 후속 작업입니다.

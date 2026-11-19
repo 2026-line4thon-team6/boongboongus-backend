@@ -4759,11 +4759,13 @@ paths:
       operationId: getRestArea
       tags:
       - 휴게소·스탬프
-      summary: 휴게소 상세·대표메뉴 최대4개
+      summary: 휴게소 상세·메뉴 최대 4개
       description: '**상태:** 설계 초안 · **접근:** 로그인 필수
 
 
-        메뉴 데이터 없으면 menus=[], detailsAvailable=false. 획득 정보는 현재 커플만, 미연결이면 earned=false. 기능 제외 결정 시 flag=false.
+        DB에 저장된 한국도로공사 메뉴 이름을 휴게소별 최대 4개 반환한다. 대표메뉴를 우선하고, 남은 자리는 추천메뉴와 일반 메뉴 순으로 채운다.
+        중복 이름은 제외하고 등록된 수만큼만 반환하며 가격은 제공하지 않는다.
+        메뉴 사진이 없으면 imageUrl은 null이다. 메뉴 데이터가 없으면 menus=[], detailsAvailable=false. 획득 정보는 현재 커플만, 미연결이면 earned=false.
 
 
         **근거:** ON p5-7 · [Figma 289:29041](https://www.figma.com/design/iVcryRTtlYHzHq2JM5wyHQ/?node-id=289-29041),
@@ -4808,7 +4810,7 @@ paths:
                   introduction: 휴게소 소개
                   menus:
                   - name: 돈카츠 오므라이스
-                    imageUrl: https://assets.example.invalid/image.jpg
+                    imageUrl: null
                   detailsAvailable: true
                 meta:
                   requestId: req_01
