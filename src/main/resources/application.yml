@@ -39,6 +39,11 @@ management:
       show-details: never
 
 app:
+  push:
+    # Web Push VAPID 키(base64url). 비워 두면 휴대폰 푸시를 보내지 않는다 (인앱 알림은 그대로)
+    vapid-public-key: ${WEB_PUSH_VAPID_PUBLIC_KEY:}
+    vapid-private-key: ${WEB_PUSH_VAPID_PRIVATE_KEY:}
+    subject: ${WEB_PUSH_SUBJECT:}
   auth:
     token-key: ${AUTH_TOKEN_KEY:}
     kakao:

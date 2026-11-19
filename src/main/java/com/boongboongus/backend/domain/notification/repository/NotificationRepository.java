@@ -58,9 +58,10 @@ public class NotificationRepository {
                 .query(NotificationRepository::map).optional();
     }
 
-    public void insert(String id, String eventKey, String senderId, String recipientId, Type type,
+    // 새로 저장했으면 true. 같은 event_key가 이미 있으면(중복 이벤트) false
+    public boolean insert(String id, String eventKey, String senderId, String recipientId, Type type,
             String title, String body, TargetType targetType, String targetId, Instant now, Instant expiresAt) {
-        jdbc.sql("""
+        return jdbc.sql("""
                 INSERT INTO notifications (id, event_key, sender_user_id, recipient_user_id, type, title, body,
                     target_type, target_id, created_at, expires_at)
                 VALUES (:id, :event, :sender, :recipient, :type, :title, :body, :targetType, :target, :now, :expiry)
@@ -68,7 +69,12 @@ public class NotificationRepository {
                 """).param("id", id).param("event", eventKey).param("sender", senderId)
                 .param("recipient", recipientId).param("type", type.name()).param("title", title)
                 .param("body", body).param("targetType", targetType.name()).param("target", targetId)
-                .param("now", now.atOffset(ZoneOffset.UTC)).param("expiry", expiresAt.atOffset(ZoneOffset.UTC)).update();
+                .param("now", now.atOffset(ZoneOffset.UTC)).param("expiry", expiresAt.atOffset(ZoneOffset.UTC)).update() == 1;
+    }
+
+    public Optional<String> findNickname(String userId) {
+        return jdbc.sql("SELECT nickname FROM auth_users WHERE id = :id").param("id", userId)
+                .query(String.class).optional();
     }
 
     public int countUnread(String userId, Instant now) {

@@ -1,5 +1,6 @@
 package com.boongboongus.backend.domain.device.repository;
 
+import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -27,5 +28,23 @@ public class DevicePushTokenRepository {
     public void deleteOwnedRegistration(String deviceId, String userId) {
         jdbc.sql("DELETE FROM device_push_tokens WHERE device_id = :deviceId AND user_id = :userId")
                 .param("deviceId", deviceId).param("userId", userId).update();
+    }
+
+    // 받는 사람이 알림을 켜 둔 웹(PWA) 기기
+    public List<WebDevice> findEnabledWebDevices(String userId) {
+        return jdbc.sql("""
+                SELECT device_id, push_token FROM device_push_tokens
+                WHERE user_id = :userId AND platform = 'WEB' AND enabled = TRUE
+                """).param("userId", userId)
+                .query((row, index) -> new WebDevice(row.getString("device_id"), row.getString("push_token"))).list();
+    }
+
+    // 만료된 구독 삭제. 그사이 같은 기기가 새 구독으로 바꿨으면 지우지 않는다
+    public void deleteRegistration(String deviceId, String token) {
+        jdbc.sql("DELETE FROM device_push_tokens WHERE device_id = :deviceId AND push_token = :token")
+                .param("deviceId", deviceId).param("token", token).update();
+    }
+
+    public record WebDevice(String deviceId, String token) {
     }
 }
