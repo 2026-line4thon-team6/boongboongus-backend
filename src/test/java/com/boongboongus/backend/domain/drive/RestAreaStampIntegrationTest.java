@@ -1,6 +1,7 @@
 package com.boongboongus.backend.domain.drive;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -8,6 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -15,6 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +35,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -54,6 +60,8 @@ class RestAreaStampIntegrationTest {
     @Autowired JdbcClient jdbc;
     @Autowired StampService stamps;
     @Autowired JsonMapper json;
+    @Autowired RestAreaCatalog areaCatalog;
+    @Autowired TransactionTemplate transactions;
 
     @BeforeEach
     void catalog() {
@@ -153,6 +161,78 @@ class RestAreaStampIntegrationTest {
                 .andExpect(jsonPath("$.data.restAreaAlerts[0].distanceMeters").value(1557));
         mvc.perform(gps(couple, drive, 3, 37.007, 127, 12, first.plusSeconds(25)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.restAreaAlerts.length()").value(0));
+    }
+
+    @Test
+    void detailReturnsSeededMenuNamesForTheRequestedDirection() throws Exception {
+        var outbound = data(mvc.perform(get(API + "/rest-areas/rest_894b68b971fa10d651f36469")
+                        .principal(() -> "single"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.detailsAvailable").value(true))
+                .andReturn()).path("menus");
+        assertThat(outbound).hasSize(2).allSatisfy(menu -> {
+            assertThat(menu.get("imageUrl").isNull()).isTrue();
+            assertThat(menu.has("price")).isFalse();
+        });
+        assertThat(outbound).extracting(menu -> menu.path("name").asText())
+                .containsExactly("횡성한우국밥", "횡성한우떡더덕스테이크");
+        mvc.perform(get(API + "/rest-areas/rest_8dad824847120cc2940b9922").principal(() -> "single"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.menus.length()").value(1))
+                .andExpect(jsonPath("$.data.menus[0].name").value("한우국밥"));
+    }
+
+    @Test
+    void refreshPrioritizesSignatureAndRecommendedMenusAndKeepsThemWhenALaterPageFails() throws Exception {
+        String restArea = "fixture_menu_sync_" + UUID.randomUUID();
+        seedArea(restArea, "메뉴 휴게소 (동쪽 방향)", ROAD, "하행", 127.01);
+        jdbc.sql("UPDATE rest_areas SET source_id = :source WHERE id = :id")
+                .param("source", "fixture:50:메뉴(동쪽):하행").param("id", restArea).update();
+
+        var failPage = new AtomicBoolean();
+        var provider = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        try {
+            provider.createContext("/openapi/restinfo/restBestfoodList", exchange -> {
+                String query = exchange.getRequestURI().getRawQuery();
+                if (!query.contains("key=private%2Bkey") || query.contains("bestfoodyn=")) {
+                    exchange.sendResponseHeaders(400, -1);
+                    exchange.close();
+                    return;
+                }
+                boolean secondPage = query.contains("pageNo=2");
+                var foods = new java.util.ArrayList<java.util.Map<String, String>>();
+                for (String name : secondPage ? List.of("대표 2", "대표 1", "반대 방향 메뉴")
+                        : List.of(failPage.get() ? "변경된 메뉴" : "일반 1", "일반 2", "추천 1", "대표 1")) {
+                    boolean opposite = name.equals("반대 방향 메뉴");
+                    foods.add(java.util.Map.of("stdRestCd", opposite ? "02" : "01",
+                            "stdRestNm", opposite ? "메뉴(서쪽)휴게소" : "메뉴(동쪽)휴게소",
+                            "routeNm", ROAD, "foodNm", name,
+                            "bestfoodyn", name.startsWith("대표") || opposite ? "Y" : "N",
+                            "recommendyn", name.startsWith("추천") ? "Y" : "N", "foodCost", "10000"));
+                }
+                byte[] response = json.writeValueAsString(java.util.Map.of(
+                        "code", secondPage && failPage.get() ? "ERROR" : "SUCCESS",
+                        "count", 7, "pageNo", secondPage ? 2 : 1, "pageSize", 2, "list", foods))
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                try (var body = exchange.getResponseBody()) {
+                    body.write(response);
+                }
+            });
+            provider.start();
+            var sync = new RestAreaMenuSync(areaCatalog, transactions, Runnable::run,
+                    "http://127.0.0.1:" + provider.getAddress().getPort(), "private+key");
+            assertThat(sync.refresh()).isEqualTo(1);
+            var expected = List.of("대표 1", "대표 2", "추천 1", "일반 1");
+            assertThat(areaCatalog.menus(restArea)).extracting(RestAreaCatalog.Menu::name)
+                    .containsExactlyElementsOf(expected);
+
+            failPage.set(true);
+            assertThatThrownBy(sync::refresh).isInstanceOf(IllegalStateException.class);
+            assertThat(areaCatalog.menus(restArea)).extracting(RestAreaCatalog.Menu::name)
+                    .containsExactlyElementsOf(expected);
+        } finally {
+            provider.stop(0);
+        }
     }
 
     @Test
