@@ -147,7 +147,7 @@ class CardService {
                     if (!cards.hasSubmittedReflection(id) && !media.hasCardPhotos(id)) {
                         throw contentRequired();
                     }
-                    cards.complete(id, now);
+                    cards.complete(card, now);
                     String recipient = partner(card, actor.user());
                     notifications.cardActivity(actor.user(), recipient, id, true, now);
                     cards.queueCompletionPush(id, recipient, now);

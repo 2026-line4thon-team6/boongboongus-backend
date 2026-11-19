@@ -11,6 +11,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Coordinate;
 import com.boongboongus.backend.domain.drive.DriveRouteLookup.Place;
+import com.boongboongus.backend.domain.playlist.dto.PlaylistResponse;
+import com.boongboongus.backend.domain.playlist.repository.PlaylistRepository;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +20,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.List;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,6 +54,7 @@ class DriveCardIntegrationTest {
     @Autowired JsonMapper json;
     @Autowired ApplicationContext context;
     @Autowired CardService cards;
+    @Autowired PlaylistRepository playlists;
     String couple;
     String driver;
     String passenger;
@@ -84,6 +88,73 @@ class DriveCardIntegrationTest {
                 VALUES (:id, :couple, '주행', 'ACTIVE', 1, :driver, :passenger, :driver, 2, :start, :start)
                 """).param("id", drive).param("couple", couple).param("driver", driver).param("passenger", passenger)
                 .param("start", OffsetDateTime.now().minusMinutes(5)).update();
+    }
+
+    @Test
+    void driveAndCardReturnTheLatestPlaylistAssociatedWithThatDrive() throws Exception {
+        storePlaylist(null, "개인 플레이리스트", Instant.now());
+        mvc.perform(auth(get(API + "/drives/" + drive), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlistId").value(org.hamcrest.Matchers.nullValue()));
+        Instant created = Instant.now().minusSeconds(10);
+        storePlaylist(drive, "이전 플레이리스트", created.minusSeconds(1));
+        var latest = storePlaylist(drive, "최신 플레이리스트", created);
+        mvc.perform(auth(get(API + "/drives/active"), passenger)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.drive.playlistId").value(latest.id()));
+        mvc.perform(auth(get(API + "/drives/" + drive), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlistId").value(latest.id()));
+
+        String card = endDrive();
+        mvc.perform(auth(get(API + "/drives/" + drive), passenger)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlistId").value(latest.id()));
+        mvc.perform(auth(get(cardPath(card)), passenger)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlist.id").value(latest.id()))
+                .andExpect(jsonPath("$.data.playlist.trackCount").value(1));
+
+        var replacement = storePlaylist(drive, "종료 후 새 플레이리스트", created.plusSeconds(1));
+        mvc.perform(auth(get(API + "/drives/" + drive), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlistId").value(replacement.id()));
+        mvc.perform(auth(get(cardPath(card)), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlist.id").value(latest.id()));
+    }
+
+    @Test
+    void cardRecoversAMissingPlaylistAndFreezesItOnCompletion() throws Exception {
+        String card = endDrive();
+        mvc.perform(auth(get(cardPath(card)), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlist").value(org.hamcrest.Matchers.nullValue()));
+        var playlist = storePlaylist(drive, "늦게 생성 완료된 플레이리스트", Instant.now().minusSeconds(2));
+        mvc.perform(auth(get(API + "/drives/" + drive + "/card"), passenger)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlist.id").value(playlist.id()));
+        mvc.perform(reflect(card, driver, "즐거웠어요", true, 0)).andExpect(status().isOk());
+        mvc.perform(complete(card, passenger, UUID.randomUUID().toString(), 1)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlist.id").value(playlist.id()));
+        assertThat(jdbc.sql("SELECT playlist_snapshot FROM drive_cards WHERE id = :id")
+                .param("id", card).query(String.class).single()).contains(playlist.id());
+        storePlaylist(drive, "다른 플레이리스트", Instant.now());
+        mvc.perform(auth(get(cardPath(card)), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlist.id").value(playlist.id()));
+    }
+
+    @Test
+    void oldCompletedCardWithMissingSnapshotCanReadItsAssociatedPlaylist() throws Exception {
+        String card = endDrive();
+        mvc.perform(reflect(card, driver, "소감", true, 0)).andExpect(status().isOk());
+        mvc.perform(complete(card, passenger, UUID.randomUUID().toString(), 1)).andExpect(status().isOk());
+        var playlist = storePlaylist(drive, "기존 연결된 플레이리스트", Instant.now().minusSeconds(10));
+        mvc.perform(auth(get(cardPath(card)), driver)).andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.playlist.id").value(playlist.id()));
+        String outsider = "outsider_" + UUID.randomUUID();
+        addMember(outsider, "다른 회원", (UUID.randomUUID().getMostSignificantBits() & Long.MAX_VALUE));
+        mvc.perform(auth(get(cardPath(card)), outsider)).andExpect(status().isForbidden());
+    }
+
+    private PlaylistResponse storePlaylist(String driveId, String title, Instant created) {
+        var track = new PlaylistResponse.Track("track", "provider-track", "곡", "가수", 180,
+                "https://images.example.invalid/album.jpg", "spotify:track:test", "https://open.spotify.com/track/test", 0);
+        var playlist = new PlaylistResponse("ply_" + UUID.randomUUID(), title, List.of("ROMANTIC"),
+                "SUNNY", List.of(), 180, List.of(track), 1, 180, false, created, 1);
+        playlists.save(driver, driveId, playlist);
+        return playlist;
     }
 
     @Test
