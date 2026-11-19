@@ -59,7 +59,7 @@ public final class GameDtos {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Question(String id, int number, String prompt, String optionA, String optionB, String hint,
-            String answer, boolean hintRevealed, boolean answerRevealed) {
+            String answer, Integer answerLength, boolean hintRevealed, boolean answerRevealed) {
     }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)

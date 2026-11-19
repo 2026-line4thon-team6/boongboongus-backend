@@ -39,7 +39,7 @@ class MeController {
     }
 
     @DeleteMapping("/api/v1/me")
-    @Operation(operationId = "deleteMe", summary = "회원 탈퇴 조건 확인")
+    @Operation(operationId = "deleteMe", summary = "회원 탈퇴")
     ResponseEntity<?> delete(Principal principal,
             @RequestHeader(value = "X-Reauth-Token", required = false) String proof) {
         if (principal == null) {

@@ -64,8 +64,13 @@ public class AccountRepository {
     }
 
     public Optional<Long> findKakaoId(String id) {
-        return jdbc.sql("SELECT kakao_id FROM auth_users WHERE id = :id")
+        return jdbc.sql("SELECT kakao_id FROM auth_users WHERE id = :id AND deleted_at IS NULL")
                 .param("id", id).query(Long.class).optional();
+    }
+
+    public boolean isDeleted(String id) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM auth_users WHERE id = :id AND deleted_at IS NOT NULL)")
+                .param("id", id).query(Boolean.class).single();
     }
 
     public Optional<User> findById(String id) {
@@ -75,7 +80,7 @@ public class AccountRepository {
     private Optional<User> selectBy(String condition, Object value) {
         return jdbc.sql("""
                 SELECT id, nickname, birth_date, profile_image_url, onboarding_completed, gender
-                FROM auth_users WHERE
+                FROM auth_users WHERE deleted_at IS NULL AND
                 """ + " " + condition).param("value", value)
                 .query((row, index) -> new User(row.getString("id"), row.getString("nickname"),
                         row.getObject("birth_date", LocalDate.class), row.getString("profile_image_url"), "KAKAO",

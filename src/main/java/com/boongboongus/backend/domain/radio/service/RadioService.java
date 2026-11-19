@@ -119,10 +119,13 @@ public class RadioService {
                 Instant.ofEpochSecond(expires), null, "READY", episode.createdAt());
     }
 
-    public byte[] audio(String owner, String id, long expires, String signature) {
-        if (expires <= Instant.now().getEpochSecond() || signingKey.isBlank()
-                || !MessageDigest.isEqual(sign(owner, id, expires).getBytes(StandardCharsets.UTF_8),
-                        signature.getBytes(StandardCharsets.UTF_8))) {
+    public byte[] audio(String id, long expires, String signature) {
+        if (expires <= Instant.now().getEpochSecond() || signingKey.isBlank() || signature.length() != 64) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+        }
+        String owner = radio.audioOwner(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+        if (!MessageDigest.isEqual(sign(owner, id, expires).getBytes(StandardCharsets.UTF_8),
+                signature.getBytes(StandardCharsets.UTF_8))) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND);
         }
         return radio.audio(owner, id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));

@@ -107,12 +107,14 @@ public class GameRepository {
         return jdbc.sql("""
                 SELECT id, question_number, prompt, option_a, option_b, hint_revealed, answer_revealed,
                     CASE WHEN hint_revealed THEN hint END AS visible_hint,
-                    CASE WHEN answer_revealed THEN answer END AS visible_answer
+                    CASE WHEN answer_revealed THEN answer END AS visible_answer,
+                    CHAR_LENGTH(REPLACE(answer, ' ', '')) AS answer_length
                 FROM game_questions WHERE session_id = :session AND question_number = :number
                 """).param("session", state.id()).param("number", state.number())
                 .query((row, index) -> new Question(row.getString("id"), row.getInt("question_number"),
                         row.getString("prompt"), row.getString("option_a"), row.getString("option_b"),
                         row.getString("visible_hint"), row.getString("visible_answer"),
+                        row.getObject("answer_length", Integer.class),
                         row.getBoolean("hint_revealed"), row.getBoolean("answer_revealed"))).single();
     }
 

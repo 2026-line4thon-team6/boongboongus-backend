@@ -1,0 +1,64 @@
+name: Backend Deploy
+on:
+  workflow_call:
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Publish image and deploy to EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AWS_DEFAULT_REGION: ap-northeast-2
+      AWS_PAGER: ""
+      ECR_REGISTRY: 007448417066.dkr.ecr.ap-northeast-2.amazonaws.com
+      ECR_REPOSITORY: boongboongus-backend
+      EC2_INSTANCE_ID: i-02b33737d24037d66
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish and deploy the tested commit
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          set -o pipefail
+          test "$(aws sts get-caller-identity --query Account --output text)" = "${ECR_REGISTRY%%.*}"
+          image="$ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA"
+          if result=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+              --image-ids "imageTag=$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text 2>&1); then
+            echo "Using existing image $result"
+          elif [[ "$result" == *ImageNotFoundException* ]]; then
+            aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+            docker build --platform linux/amd64 -t "$image" .
+            docker push "$image"
+          else
+            printf '%s\n' "$result" >&2
+            exit 1
+          fi
+
+          latest=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [[ "$latest" != "$GITHUB_SHA" ]]; then
+            echo "Skipping deployment because main advanced to $latest"
+            exit 0
+          fi
+
+          parameters=$(jq -nc --arg payload "$(base64 -w0 scripts/deploy-ec2.sh)" --arg sha "$GITHUB_SHA" \
+            '{commands:[("printf %s " + ($payload|@sh) + " | base64 -d | bash -s -- " + ($sha|@sh))]}')
+          command_id=$(aws ssm send-command --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript --comment "Deploy $GITHUB_SHA" \
+            --parameters "$parameters" --query Command.CommandId --output text)
+          if ! aws ssm wait command-executed --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID"; then
+            aws ssm get-command-invocation --command-id "$command_id" --instance-id "$EC2_INSTANCE_ID" \
+              --query '{status:Status,details:StatusDetails}' --output json
+            exit 1
+          fi
+
+          curl -fsS --max-time 10 https://15.164.137.250/api/v1/health \
+            | jq -e '.data.status == "UP"'

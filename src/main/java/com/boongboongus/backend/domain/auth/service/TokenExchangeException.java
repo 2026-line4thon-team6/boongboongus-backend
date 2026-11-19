@@ -50,6 +50,11 @@ public final class TokenExchangeException extends RuntimeException {
                 "진행 중인 주행을 종료하거나 준비 중인 주행을 취소해 주세요.");
     }
 
+    static TokenExchangeException providerUnlinkFailed() {
+        return new TokenExchangeException(HttpStatus.SERVICE_UNAVAILABLE, "PROVIDER_UNLINK_FAILED",
+                "카카오 연결을 해제하지 못했습니다. 다시 시도해 주세요.");
+    }
+
     static TokenExchangeException unavailable() {
         return new TokenExchangeException(HttpStatus.SERVICE_UNAVAILABLE, "SERVICE_UNAVAILABLE",
                 "잠시 후 다시 시도해 주세요.");

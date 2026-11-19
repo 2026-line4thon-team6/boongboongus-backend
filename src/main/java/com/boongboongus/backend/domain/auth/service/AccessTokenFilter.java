@@ -1,6 +1,7 @@
 package com.boongboongus.backend.domain.auth.service;
 
 import com.boongboongus.backend.common.api.ErrorResponse;
+import com.boongboongus.backend.domain.auth.repository.AccountRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -18,10 +19,12 @@ import tools.jackson.databind.json.JsonMapper;
 class AccessTokenFilter extends OncePerRequestFilter {
     private final ServiceTokens tokens;
     private final JsonMapper json;
+    private final AccountRepository accounts;
 
-    AccessTokenFilter(ServiceTokens tokens, JsonMapper json) {
+    AccessTokenFilter(ServiceTokens tokens, JsonMapper json, AccountRepository accounts) {
         this.tokens = tokens;
         this.json = json;
+        this.accounts = accounts;
     }
 
     @Override
@@ -37,7 +40,7 @@ class AccessTokenFilter extends OncePerRequestFilter {
             } catch (ServiceTokens.ExpiredAccessToken exception) {
                 expired = true;
             }
-            if (userId != null) {
+            if (userId != null && !accounts.isDeleted(userId)) {
                 String subject = userId;
                 chain.doFilter(new HttpServletRequestWrapper(request) {
                     @Override
@@ -60,7 +63,7 @@ class AccessTokenFilter extends OncePerRequestFilter {
                         && ("/api/v1/game-sessions".equals(path) || path.startsWith("/api/v1/game-sessions/")))
                 || (List.of("POST", "GET", "HEAD").contains(request.getMethod()) && "/api/v1/radio/episodes".equals(path))
                 || (List.of("GET", "HEAD").contains(request.getMethod())
-                        && path.matches("/api/v1/radio/episodes/[^/]+(/audio)?"))
+                        && path.matches("/api/v1/radio/episodes/[^/]+"))
                 || ("POST".equals(request.getMethod()) && "/api/v1/playlists".equals(path))
                 || (List.of("GET", "HEAD").contains(request.getMethod()) && path.matches("/api/v1/playlists/[^/]+"))
                 || ("/api/v1/notifications".equals(path) && List.of("GET", "HEAD").contains(request.getMethod()))

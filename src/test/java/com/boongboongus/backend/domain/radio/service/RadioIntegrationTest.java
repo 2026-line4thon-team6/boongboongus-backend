@@ -4,28 +4,40 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.boongboongus.backend.domain.job.dto.JobResponse.Status;
 import com.boongboongus.backend.domain.job.service.JobService;
 import com.boongboongus.backend.domain.radio.dto.RadioRequest;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.UUID;
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.server.ResponseStatusException;
 
 @ActiveProfiles("test")
+@AutoConfigureMockMvc
 @SpringBootTest(properties = {"AUTH_TOKEN_KEY=radio-test-key", "app.auth.token-key=",
         "spring.config.import=classpath:legal-documents-test.yml"})
 class RadioIntegrationTest {
     @Autowired RadioService radio;
     @Autowired JobService jobs;
     @Autowired JdbcClient jdbc;
+    @Autowired MockMvc mvc;
     @MockitoBean RadioProviders providers;
     @Autowired tools.jackson.databind.ObjectMapper json;
 
@@ -44,7 +56,7 @@ class RadioIntegrationTest {
     }
 
     @Test
-    void generatesPrivateAudioAndRejectsInvalidStory() throws InterruptedException {
+    void generatesPrivateAudioAndRejectsInvalidStory() throws Exception {
         String owner = "usr_" + UUID.randomUUID();
         jdbc.sql("INSERT INTO auth_users (id, kakao_id, nickname, onboarding_completed) VALUES (:id, -9301, '', FALSE)")
                 .param("id", owner).update();
@@ -93,12 +105,24 @@ class RadioIntegrationTest {
         assertThat(lastPage.items()).extracting(episode -> episode.id()).containsExactly(id);
         assertThat(lastPage.hasMore()).isFalse();
         assertThat(lastPage.nextCursor()).isNull();
-        var query = URI.create(result.audioUrl()).getQuery().split("&");
-        long expires = Long.parseLong(query[0].substring("expires=".length()));
-        String signature = query[1].substring("signature=".length());
-        assertThat(radio.audio(owner, id, expires, signature)).containsExactly(1, 2, 3);
-        assertThatThrownBy(() -> radio.audio("another-user", id, expires, signature))
-                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("404");
+        URI audioUrl = URI.create(result.audioUrl());
+        mvc.perform(get(audioUrl)).andExpect(status().isOk())
+                .andExpect(content().contentType("audio/mpeg"))
+                .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(content().bytes(new byte[]{1, 2, 3}));
+        URI tamperedUrl = URI.create(result.audioUrl().replaceFirst("signature=.*", "signature=" + "0".repeat(64)));
+        mvc.perform(get(tamperedUrl)).andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/radio/episodes/{id}/audio?" + audioUrl.getRawQuery(), second.resourceId()))
+                .andExpect(status().isNotFound());
+
+        long expiredAt = Instant.now().getEpochSecond() - 1;
+        var mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec("radio-test-key".getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        String expiredSignature = HexFormat.of().formatHex(mac.doFinal(
+                ("radio-audio\n" + owner + "\n" + id + "\n" + expiredAt).getBytes(StandardCharsets.UTF_8)));
+        mvc.perform(get(audioUrl.getPath()).param("expires", Long.toString(expiredAt)).param("signature", expiredSignature))
+                .andExpect(status().isNotFound());
+        mvc.perform(get("/api/v1/radio/episodes/{id}", id)).andExpect(status().isUnauthorized());
         assertThatThrownBy(() -> radio.get("another-user", id, "http://localhost"))
                 .isInstanceOf(ResponseStatusException.class).hasMessageContaining("404");
     }

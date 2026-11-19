@@ -199,6 +199,15 @@ public class MediaService {
         cleanQuietly(id);
     }
 
+    public void deleteForWithdrawnOwner(String userId) {
+        jdbc.sql("""
+                UPDATE card_photo_uploads
+                SET status = 'DELETED', card_id = NULL, card_position = NULL, cleanup_pending = TRUE,
+                    sha256 = NULL, content_type = NULL, content_bytes = NULL, width = NULL, height = NULL
+                WHERE user_id = :id AND status <> 'DELETED'
+                """).param("id", userId).update();
+    }
+
     @Scheduled(fixedDelay = 3_600_000, initialDelay = 3_600_000)
     void cleanupExpired() {
         List<String> pending = jdbc.sql("""

@@ -73,6 +73,17 @@ public class ServiceSessionRepository {
                 .param("id", id).update();
     }
 
+    public void revokeAll(String userId, Instant now) {
+        jdbc.sql("""
+                UPDATE auth_service_sessions SET revoked_at = :now
+                WHERE user_id = :id AND revoked_at IS NULL
+                """).param("now", now.atOffset(ZoneOffset.UTC)).param("id", userId).update();
+        jdbc.sql("""
+                DELETE FROM auth_refresh_rotations
+                WHERE session_id IN (SELECT id FROM auth_service_sessions WHERE user_id = :id)
+                """).param("id", userId).update();
+    }
+
     public record StoredSession(ServiceSession session, boolean revoked) {}
 
     public void save(ServiceSession session) {
